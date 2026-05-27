@@ -1,0 +1,4 @@
+stravalib>=2.0
+garminconnect>=0.2.19
+python-dotenv>=1.0
+pandas>=2.2
