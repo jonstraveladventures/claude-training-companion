@@ -6,6 +6,10 @@ It connects to **Strava** (runs/rides) and **Garmin Connect** (sleep, HR, HRV, s
 
 > ⚠️ **Not medical advice.** This is a personal-analytics and coaching-assistant template. It does not diagnose or treat anything. Talk to a doctor before changing training, and never act on health numbers without professional input.
 
+![The offline training dashboard](docs/dashboard.png)
+
+*The self-contained `dashboard.html`, rendered here from example data: snapshot cards, per-lift progression (including the double-progression rep climb), weekly running volume and polarisation, plus recovery and fitness trends. It builds from your committed logs and opens in any browser, no server.*
+
 ---
 
 ## What it does
@@ -17,6 +21,24 @@ It connects to **Strava** (runs/rides) and **Garmin Connect** (sleep, HR, HRV, s
 - **Running power + dynamics** — on watches that record them (Forerunner 255+/265 generation), each run also carries running power, cadence, ground-contact time and vertical oscillation — metrics Strava drops entirely.
 - **Offline dashboard** — `build_dashboard.py` renders a single self-contained `dashboard.html` (strength progression, running volume + polarisation, recovery + fitness trends, bodyweight) that opens in any browser with no server.
 - **Training planning** — keep a living `TRAINING_PLAN.md` and have Claude cross-check each session against the plan.
+- **Knows the device gotchas** — `CLAUDE.md` ships a hard-won *data-quality caveats* section so Claude doesn't hand you wrong numbers: treadmill speed from the wrist is fiction, ergometer watts aren't running power, Garmin's resting-HR scalar overstates recovery, VO2max and race predictions are sparse by design, and more.
+
+## Talking to it
+
+You just tell it what you did. A strength session, start to finish:
+
+```
+you    ▸ did 5×5 back squat at 100 kg today, last set was a grinder
+claude ▸ ✓ Logged to strength_log.jsonl
+         back squat 100 kg 5×5 (RPE ~9 on the last set) — your top working
+         set, up from 97.5 kg last week. Rebuilt the progression view and
+         committed. Plan says hold 100 kg until all five sets clear at
+         RPE ≤8 before the next jump.
+```
+
+Same shape for runs (*"pull my run"*), recovery (*"how did I sleep?"*), and
+reviews (*"weekly review"*). The bundled skill runs the full logging procedure
+every time, so nothing gets dropped.
 
 ## How it works
 
@@ -77,11 +99,12 @@ The **JSONL files are the source of truth** (committed to git). The SQLite DB an
 | Path | What |
 |---|---|
 | `src/fitness/` | Strava + Garmin sync, DB schema, HR-zone computation |
-| `scripts/` | CLI entry points (sync, logging, sheet/run-log generators, plots) |
-| `.claude/skills/training-companion/SKILL.md` | The Claude Code skill (routines: recovery / log / run / weekly review) |
-| `CLAUDE.md` | Project conventions + logging protocol Claude follows |
+| `scripts/` | CLI entry points: sync, strength/run/recovery/sleep/cardio/weight log builders, the dashboard, and plots |
+| `.claude/skills/training-companion/SKILL.md` | The Claude Code skill (routines: recovery / log / run / weekly review / cross-training) |
+| `CLAUDE.md` | Project conventions, logging protocol, and the data-quality caveats Claude follows |
 | `TRAINING_PLAN.md` | Your living plan (example provided) |
 | `data/` | Local DB + derived views (gitignored) + committed JSONL logs |
+| `docs/` | README assets (the dashboard screenshot) |
 
 ## Credits
 
