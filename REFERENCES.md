@@ -1,16 +1,18 @@
 # References
 
-The sports-science literature behind this project, in two groups: the formulas the
-code actually computes, and the wider evidence base that informs training decisions
-(the example plan, the targets, the caveats).
+These papers were useful in designing the training programme this project supports.
+They're collected here in case they're useful to you too, and so the choices behind the
+code and the plan trace back to real sources rather than gym folklore.
+
+Two groups: the formulas the code actually computes, and the wider training-science that
+informed the plan, the targets, and the caveats.
 
 Every citation was checked against the indexed record (PubMed / Crossref / Unpaywall)
-before being listed here; none is reconstructed from memory. Reach each paper through
-its DOI. Many are open access; the PDFs are not redistributed here.
+before being listed; none is reconstructed from memory. Reach each paper through its DOI;
+many are open access. No PDFs are shared here, only the links.
 
-> ⚠️ Listed for traceability and further reading, not as medical or training advice.
-> These papers report population-level findings, not individual prescriptions. See the
-> health-and-safety note in the [README](README.md).
+Not medical advice: these report what happened in studies, not what you should do. The
+[README](README.md) has the full health-and-safety note.
 
 ## Methods the code computes
 
@@ -29,7 +31,7 @@ its DOI. Many are open access; the PDFs are not redistributed here.
   2010;5(3):276–291. DOI: [10.1123/ijspp.5.3.276](https://doi.org/10.1123/ijspp.5.3.276).
   PMID 20861519.
 
-## Evidence base (further reading)
+## Further reading
 
 Verified 2026-07-13, grouped by topic.
 

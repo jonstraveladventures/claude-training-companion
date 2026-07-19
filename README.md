@@ -22,7 +22,7 @@ It connects to Strava (runs and rides) and Garmin Connect (sleep, HR, HRV, stres
 - **Offline dashboard:** `build_dashboard.py` renders the `dashboard.html` shown above (strength progression, running volume and polarisation, recovery and fitness trends, bodyweight). It opens in any browser with no server.
 - **Training planning:** keep a living `TRAINING_PLAN.md` and have Claude cross-check each session against it.
 - **Data-quality caveats:** `CLAUDE.md` documents the device quirks that give wrong numbers if you ignore them. Treadmill speed from the wrist is unreliable, ergometer watts are not running power, Garmin's resting-HR scalar overstates recovery, and VO2max and race predictions are sparse by design.
-- **Grounded in the literature:** the formulas the code computes (Karvonen zones, Epley e1RM, Seiler's polarised distribution) and the wider training-science it draws on are cited, with DOIs, in [`REFERENCES.md`](REFERENCES.md).
+- **Papers that shaped it:** the studies behind the methods the code computes (Karvonen zones, Epley e1RM, Seiler's polarised distribution) and the wider training choices are listed, with DOIs, in [`REFERENCES.md`](REFERENCES.md).
 
 ## Talking to it
 
