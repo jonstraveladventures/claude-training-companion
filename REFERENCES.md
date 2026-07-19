@@ -7,10 +7,6 @@ code and the plan trace back to real sources rather than gym folklore.
 Two groups: the formulas the code actually computes, and the wider training-science that
 informed the plan, the targets, and the caveats.
 
-Every citation was checked against the indexed record (PubMed / Crossref / Unpaywall)
-before being listed; none is reconstructed from memory. Reach each paper through its DOI;
-many are open access. No PDFs are shared here, only the links.
-
 Not medical advice: these report what happened in studies, not what you should do. The
 [README](README.md) has the full health-and-safety note.
 
