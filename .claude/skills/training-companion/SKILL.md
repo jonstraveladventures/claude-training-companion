@@ -15,7 +15,7 @@ Always use the project venv (`.venv/bin/python`). Read `CLAUDE.md` and
 `TRAINING_PLAN.md` at the start if not already in context — they hold the
 data-quality caveats, logging schema, units, timezone, and current plan.
 
-There are four routines. Pick the one matching the request. More than one can run
+There are five routines. Pick the one matching the request. More than one can run
 in a turn (e.g. morning check + log yesterday's session).
 
 > **Personalise the numbers below.** The targets, zone table, and constraints are
@@ -44,10 +44,22 @@ Trigger: "how was my sleep / last night", "pull my garmin/sleep data", "how was 
    | Resting HR | near your baseline | most reliable single signal |
    | Overnight HR floor | near your baseline | from intraday HR stream |
 
+   **Prefer the derived HR floor over Garmin's resting-HR scalar** — the scalar is
+   inflated by a slow-to-settle early night, so it partly measures the *evening*.
+   The gap `resting_hr − hr_floor` is itself the signal (how elevated the early
+   night stayed).
+
 3. **Body battery is embedded in the `stress` stream** (`bodyBatteryValuesArray`,
    level at index 2) — read it from there if the dedicated pull errors.
 4. **Ask for "tried to sleep" time, not "got into bed"** if estimating latency.
 5. Give a clear **green / amber / red** call tied to what's actually scheduled.
+6. **Persist it (durable, like strength/runs).** The pulled recovery + sleep data
+   lives only in the gitignored DB until exported — run
+   `.venv/bin/python scripts/build_recovery_log.py` and
+   `.venv/bin/python scripts/build_sleep_curves.py`, then
+   `git add data/recovery_log.jsonl data/sleep_curves.jsonl && git commit -m "Recovery <date>"`.
+   (recovery_log holds the stage *totals*; sleep_curves holds the nightly *shape*,
+   which can't be reconstructed once the API is gone.)
 
 ## Routine 2 — Log a strength session (MANDATORY full procedure)
 
@@ -85,6 +97,20 @@ Pull from the SQLite DB + the JSONL and report:
 3. Resting-HR / overnight-stress drift over 7 days (flag a sustained rise → consider a deload).
 4. Recalibration flags — any accessory consistently "easy" → bump.
 5. Recovery arc — body-battery trend, any amber nights.
+
+## Routine 5 — Cross-training, bodyweight & dashboard
+
+- **Cross-training** (elliptical/bike/swim, reported or synced): run
+  `.venv/bin/python scripts/build_cardio_log.py` and commit `data/cardio_log.jsonl`.
+  Log any machine-console reading the APIs don't carry (e.g. elliptical watts) into
+  that session's `manual` block — it survives rebuilds. Never compare machine watts
+  to running power, or across different (uncalibrated) machines.
+- **Bodyweight:** when the user reports a weight, append a manual line to
+  `data/weight_log.jsonl`, run `.venv/bin/python scripts/build_weight_log.py`
+  (merges Garmin weigh-ins, preserves manual entries), and commit. Bodyweight is
+  load-bearing — it drives protein-per-kg and power-to-weight.
+- **Dashboard:** on request, `.venv/bin/python scripts/build_dashboard.py` renders a
+  self-contained `dashboard.html` (gitignored) they can open offline.
 
 ---
 

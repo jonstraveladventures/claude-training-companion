@@ -20,6 +20,44 @@ ZONE_BANDS_HRR = [
     ("Z5 VO2max",        0.90, 1.00),
 ]
 
+# --- Personal zone boundaries used by the durable log builders ---------------
+# Karvonen, HRmax 195 / RHR ~42, per TRAINING_PLAN.md. SINGLE SOURCE OF TRUTH:
+# build_run_log.py and build_cardio_log.py both import these — do NOT re-hardcode
+# the numbers anywhere else, or the logs will silently drift apart. If the lab
+# lactate test lands, recalibrate to the measured LT1/LT2 HERE and rebuild.
+# >>> SET YOUR OWN <<< upper bpm bound of each zone (example values shown — Karvonen,
+# HRmax 195 / RHR ~42). Replace with your numbers, or derive from compute_zones().
+PERSONAL_ZONE_UPPERS = [(134, "Z1"), (148, "Z2"), (163, "Z3"), (178, "Z4")]  # above -> Z5
+ZONE_NAMES = ("Z1", "Z2", "Z3", "Z4", "Z5")
+
+
+def zone(hr: float) -> str:
+    for upper, name in PERSONAL_ZONE_UPPERS:
+        if hr <= upper:
+            return name
+    return "Z5"
+
+
+def zone_dist(hr, t) -> dict | None:
+    """{Z1..Z5: seconds} weighted by sample dt, or None if no usable HR."""
+    if not hr or not t or len(hr) != len(t):
+        return None
+    tz = {z: 0 for z in ZONE_NAMES}
+    for i in range(1, len(t)):
+        tz[zone(hr[i])] += t[i] - t[i - 1]
+    return tz if sum(tz.values()) else None
+
+
+def drift_quarters(hr) -> list | None:
+    """Mean HR per quarter of the session (cardiac-drift signal)."""
+    if not hr:
+        return None
+    q = len(hr) // 4
+    if q == 0:
+        return None
+    return [round(sum(seg) / len(seg), 1) for seg in
+            (hr[i * q:(i + 1) * q] if i < 3 else hr[3 * q:] for i in range(4))]
+
 
 def observed_hr_max(sport_filter: list[str] | None = None) -> int:
     with connect() as conn:

@@ -1,6 +1,11 @@
+# MIGRATION (before 1 June 2027): Strava API changes take effect — auth tokens
+# must be sent in request headers (not form params), base URL moves from
+# www.strava.com/api/v3 -> www.api-v3.strava.com, and oauth/deauthorize -> oauth/revoke.
+# All handled inside stravalib, not this code: just `pip install -U stravalib`
+# before then. (The 30 June 2026 subscription requirement is already satisfied.)
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from stravalib import Client
 
@@ -21,7 +26,9 @@ def _client() -> Client:
 def sync(days: int | None = None) -> int:
     """Sync Strava activities. days=None pulls full history."""
     client = _client()
-    after = 0 if days is None else datetime.now(timezone.utc).timestamp() - days * 86400
+    # stravalib expects a datetime (or None); a bare epoch float trips its
+    # isinstance check, so None for full history, a datetime for a window.
+    after = None if days is None else datetime.now(timezone.utc) - timedelta(days=days)
     rows = []
     for a in client.get_activities(after=after):
         rows.append((

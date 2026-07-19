@@ -7,10 +7,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fitness import strava_sync, garmin_sync, strength
+from fitness import strava_sync, garmin_sync, garmin_activities, strength
 from fitness.db import init
 
 init()
 print(f"Strava: {strava_sync.sync(days=None)} activities")  # full history
 print(f"Garmin: {garmin_sync.sync(days=365)} days")
+print(f"Garmin activities: {garmin_activities.sync(limit=30)} run metrics cached")
 print(f"Strength: {strength.ingest()} new sessions")

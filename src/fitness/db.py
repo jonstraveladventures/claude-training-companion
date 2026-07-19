@@ -34,7 +34,12 @@ CREATE TABLE IF NOT EXISTS garmin_daily (
     body_battery_low REAL,
     stress_avg REAL,
     steps INTEGER,
-    raw_json TEXT
+    raw_json TEXT,
+    hrv_status TEXT,
+    vo2max REAL,
+    training_readiness REAL,
+    race_5k_s INTEGER,
+    race_10k_s INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS strength_sessions (
@@ -63,6 +68,32 @@ CREATE TABLE IF NOT EXISTS garmin_intraday (
     raw_json TEXT NOT NULL,
     fetched_at TEXT NOT NULL,
     PRIMARY KEY (date, stream)
+);
+
+-- Per-activity Garmin metrics the Strava feed drops: running power and running
+-- dynamics (only the FR265 records these; strap-dependent dynamics are sparse).
+-- Joined onto Strava runs by start-time in build_run_log.py.
+CREATE TABLE IF NOT EXISTS garmin_activities (
+    garmin_id INTEGER PRIMARY KEY,
+    start_time_gmt TEXT,
+    activity_type TEXT,
+    avg_power REAL,
+    norm_power REAL,
+    max_power REAL,
+    avg_run_cadence REAL,
+    max_run_cadence REAL,
+    ground_contact_ms REAL,
+    gct_balance_left REAL,
+    stride_length_cm REAL,
+    vertical_oscillation_cm REAL,
+    vertical_ratio REAL,
+    avg_respiration REAL,
+    aerobic_te REAL,
+    anaerobic_te REAL,
+    te_label TEXT,
+    training_load REAL,
+    fetched_at TEXT,
+    raw_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS activity_details (
@@ -96,6 +127,31 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
+# Columns added after the table first shipped. CREATE TABLE IF NOT EXISTS is a
+# no-op on an existing DB, so they have to be ALTERed in.
+MIGRATIONS = {
+    "garmin_daily": [
+        ("hrv_status", "TEXT"),
+        ("vo2max", "REAL"),
+        ("training_readiness", "REAL"),
+        ("race_5k_s", "INTEGER"),
+        ("race_10k_s", "INTEGER"),
+        ("light_sleep_s", "INTEGER"),
+        ("awake_sleep_s", "INTEGER"),
+        ("hr_floor", "INTEGER"),
+    ],
+}
+
+
+def migrate(conn: sqlite3.Connection) -> None:
+    for table, cols in MIGRATIONS.items():
+        have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for name, decl in cols:
+            if name not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+
+
 def init() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+        migrate(conn)

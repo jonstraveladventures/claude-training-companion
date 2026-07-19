@@ -8,3 +8,6 @@ data/*.png
 data/*.csv
 data/*.b64
 # Keep the committed JSONL logs; ignore everything else generated in data/
+
+# Generated, regenerable derived views (rebuild from the committed JSONL logs)
+dashboard.html

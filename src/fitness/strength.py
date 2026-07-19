@@ -10,14 +10,27 @@ LOG_PATH = Path(__file__).resolve().parents[2] / "data" / "strength_log.jsonl"
 def ingest() -> int:
     if not LOG_PATH.exists():
         return 0
+    entries = [(l, json.loads(l)) for l in
+               (ln.strip() for ln in LOG_PATH.read_text().splitlines()) if l]
+    # correction_of supersession: a later entry with correction_of=<logged_at>
+    # replaces that original, which must NOT live in the DB or it double-counts.
+    # The two committed builders already honour this; ingest() must too.
+    superseded = {e.get("correction_of") for _, e in entries if e.get("correction_of")}
     inserted = 0
-    with connect() as conn, LOG_PATH.open() as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
+    with connect() as conn:
+        # Purge any superseded originals a prior ingest already inserted.
+        if superseded:
+            ph = ",".join("?" * len(superseded))
+            ids = [r[0] for r in conn.execute(
+                f"SELECT id FROM strength_sessions WHERE logged_at IN ({ph})",
+                tuple(superseded)).fetchall()]
+            for sid in ids:
+                conn.execute("DELETE FROM strength_sets WHERE session_id=?", (sid,))
+                conn.execute("DELETE FROM strength_sessions WHERE id=?", (sid,))
+        for line, entry in entries:
+            if entry["logged_at"] in superseded:
+                continue  # this original was corrected by a later entry
             h = hashlib.sha256(line.encode()).hexdigest()
-            entry = json.loads(line)
             cur = conn.execute(
                 "INSERT OR IGNORE INTO strength_sessions "
                 "(logged_at, session_date, session_label, notes, source_line_hash) "

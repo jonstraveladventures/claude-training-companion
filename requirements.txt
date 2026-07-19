@@ -2,3 +2,6 @@ stravalib>=2.0
 garminconnect>=0.2.19
 python-dotenv>=1.0
 pandas>=2.2
+numpy>=1.26
+matplotlib>=3.8
+pytz>=2024.1
