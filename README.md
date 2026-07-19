@@ -22,6 +22,7 @@ It connects to Strava (runs and rides) and Garmin Connect (sleep, HR, HRV, stres
 - **Offline dashboard:** `build_dashboard.py` renders the `dashboard.html` shown above (strength progression, running volume and polarisation, recovery and fitness trends, bodyweight). It opens in any browser with no server.
 - **Training planning:** keep a living `TRAINING_PLAN.md` and have Claude cross-check each session against it.
 - **Data-quality caveats:** `CLAUDE.md` documents the device quirks that give wrong numbers if you ignore them. Treadmill speed from the wrist is unreliable, ergometer watts are not running power, Garmin's resting-HR scalar overstates recovery, and VO2max and race predictions are sparse by design.
+- **Grounded in the literature:** the formulas the code computes (Karvonen zones, Epley e1RM, Seiler's polarised distribution) and the wider training-science it draws on are cited, with DOIs, in [`REFERENCES.md`](REFERENCES.md).
 
 ## Talking to it
 
@@ -103,6 +104,7 @@ The JSONL files are the source of truth, committed to git. The SQLite database a
 | `.claude/skills/training-companion/SKILL.md` | The Claude Code skill (routines: recovery / log / run / weekly review / cross-training) |
 | `CLAUDE.md` | Project conventions, logging protocol, and the data-quality caveats Claude follows |
 | `TRAINING_PLAN.md` | Your living plan (example provided) |
+| `REFERENCES.md` | Verified sports-science citations behind the methods and training choices |
 | `data/` | Local DB + derived views (gitignored) + committed JSONL logs |
 | `docs/` | README assets (the dashboard screenshot) |
 
