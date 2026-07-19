@@ -29,7 +29,7 @@ Not medical advice: these report what happened in studies, not what you should d
 
 ## Further reading
 
-Verified 2026-07-13, grouped by topic.
+Grouped by topic.
 
 ### Strength & hypertrophy
 
