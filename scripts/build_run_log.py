@@ -12,7 +12,7 @@ Idempotent: rebuilds both files from the DB every run. Safe to run repeatedly.
 Run: .venv/bin/python scripts/build_run_log.py
 """
 import json, csv, io, sqlite3, sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,7 +27,7 @@ con = sqlite3.connect(DB)
 stream_ids = {r[0] for r in con.execute("SELECT DISTINCT activity_id FROM activity_streams")}
 
 # Garmin-only per-run metrics (running power + dynamics), joined to Strava runs
-# by GMT start-minute. Sparse: only FR265 runs have power/dynamics; strap-less
+# by GMT start-minute. Sparse: only supported watches record power/dynamics; strap-less
 # runs lack ground-contact/oscillation; older watches have cadence at most.
 def _load_garmin_metrics():
     try:
@@ -100,15 +100,41 @@ for r, raw in _parsed:
     else:
         _groups.append([(r, raw)])
 
-deduped = []   # (row, machine_dist_m or None, dup_ids)
+def _overlaps(a, b):
+    """True if two recordings cover overlapping wall-clock time (the same run
+    re-recorded by two devices), vs merely starting within 180 s. Sequential
+    GPS-dropout fragments of one run start close together but do NOT overlap;
+    collapsing those into a single twin silently discards the larger fragment,
+    so only genuine time-overlap counts as a duplicate."""
+    sa, sb = datetime.fromisoformat(a[1]), datetime.fromisoformat(b[1])
+    ea = sa + timedelta(seconds=a[4] or 0)
+    eb = sb + timedelta(seconds=b[4] or 0)
+    return sa < eb and sb < ea
+
+deduped = []   # (row, machine_dist_m or None, merged_ids)
 for g in _groups:
     if len(g) == 1:
         deduped.append((g[0][0], None, [])); continue
-    prim = next((x for x in g if _is_garmin(x[1])), None) or max(g, key=lambda x: x[0][4] or 0)
-    tech = next((x for x in g if _is_machine(x[1], x[0][2])), None)
-    machine = tech[0][3] if (tech and tech[0] is not prim[0]) else None
-    dup_ids = [x[0][0] for x in g if x[0] is not prim[0]]
+    # Primary = the FULLEST recording (largest distance), preferring a watch
+    # source among the group (consistent HR + the start-minute key that joins
+    # running power). Picking by distance, not chronology, stops the bug where
+    # the first watch entry won even when a larger twin existed.
+    garmins = [x for x in g if _is_garmin(x[1])]
+    prim = max(garmins or g, key=lambda x: x[0][3] or 0)
+    prim_id = prim[0][0]
+    # Only collapse members that genuinely OVERLAP prim in time (true duplicate
+    # recordings of one run). A machine twin among them gives the reliable belt
+    # distance. Members that merely start within 180 s but don't overlap are
+    # sequential fragments (or a separate short run) — keep them as their own
+    # rows rather than discarding the larger real distance.
+    dups = [x for x in g if x[0][0] != prim_id and _overlaps(prim[0], x[0])]
+    dup_ids = [x[0][0] for x in dups]
+    tech = next((x for x in dups if _is_machine(x[1], x[0][2])), None)
+    machine = tech[0][3] if tech else None
     deduped.append((prim[0], machine, dup_ids))
+    for x in g:
+        if x[0][0] != prim_id and x[0][0] not in dup_ids:
+            deduped.append((x[0], None, []))
 
 records = []
 for row, machine_dist_m, dup_ids in deduped:
@@ -162,7 +188,8 @@ for row, machine_dist_m, dup_ids in deduped:
             rec["z4_z5_pct"] = round(100 * (tz["Z4"] + tz["Z5"]) / tot, 1)
         rec["drift_quarters"] = drift_quarters(hr)
 
-    rec["garmin"] = _garmin_block(start)   # running power + dynamics (FR265; sparse)
+    rec["garmin"] = _garmin_block(start)   # running power + dynamics (watch-dependent; sparse)
+    rec["merged_ids"] = dup_ids or None    # audit trail: twin recordings collapsed in
 
     records.append(rec)
 

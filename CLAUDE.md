@@ -113,6 +113,30 @@ Document gotchas you discover so Claude doesn't relearn them. The list below is 
 - **Sub-1km "runs"** are usually warm-up jogs or accidental recordings — flagged `counts_as_run: false` so they don't inflate run counts / weekly volume, while the row stays in the log.
 - **Sport-specific HR zones:** some watches let each activity profile carry HR zones that override the account default. If runs are mis-zoned *on the watch*, check the running profile's own zones first. (Your own analysis derives zones from raw HR, so it's unaffected.)
 - **Sleep-latency estimates:** ask for "tried to sleep" time, not "got into bed" time.
+- **Strava activity streams are DOWNSAMPLED — never count samples as seconds.** Streams come back at variable resolution, not 1 Hz: a 2384 s run returned 1000 samples at mostly 2 s intervals. So `sum(1 for v in hr if v >= X)` gives *samples*, not seconds, and undercounts time-in-zone by roughly the sampling factor — it reported 8:17 above a threshold where the truth was **16:03**, exactly half. Always weight by the time stream: `sum(t[i]-t[i-1] for i in range(1,len(t)) if hr[i] and hr[i] >= X)`. Cross-check any ad-hoc duration against the zone percentages, which are computed correctly — if `pct x elapsed` and your figure disagree, your figure is wrong.
+- **Watch-recorded strength data is unreliable on THREE independent axes.** `get_activity_exercise_sets()` is the only per-set record of a lift, and every part of it can be wrong. (1) **Weights are fiction on bodyweight work** — the watch requires a number for every set, so bodyweight exercises acquire a fabricated load that is really the lifter's own estimate, and may differ day to day for the same movement. Log `weight_kg: null` and keep the number in a separate `watch_entered_kg` field if you want the provenance; never read it as a progression. (2) **Exercise labels are auto-guessed** — records carry a category and a confidence, and real lifts come back as `SHRUG` or `LUNGE` at 40-55%, or `UNKNOWN` at 99%. Map by load + rep pattern + the session plan instead. (3) **Sets go missing, and phantom sets appear** — a 5-rep squat logged in 4 s, or ten reps in 8 s, is usually one set split across two records; a huge rep count with a near-zero duration is a manual after-the-fact entry. Units: `weight` is in **grams**; filter to `setType == "ACTIVE"`. **Consequence: always show the parsed numbers to the athlete and let them correct what the exercise was, how many sets, and whether the weight is real, before treating any of it as the record.**
+- **`restlessMomentsCount` is blind to movement while awake.** It counts micro-movements during *detected sleep* only, so once the watch scores a period as Awake, conscious tossing and turning in that window does not raise the number. Across 9 nights it correlated with awake-minutes at only r = +0.31, and the extremes inverted. **A normal restless count never rules out a night the athlete describes as broken** — believe the subjective report over the metric here.
+- **Interval-run recordings often stop at the last hard rep, and HR lag hides the recovery length.** Athletes commonly stop the timer when they head home, so a missing easy tail is not evidence the cool-down was skipped — ask. And don't estimate recovery duration from the width of the HR trough between reps: HR takes 30-45 s to fall after a rep and rises again before the next one starts, so a true 3:00 recovery can look like 2:30. Map reps onto the prescribed grid instead.
+
+## Analysis discipline (read before making any claim about the data)
+
+These are failure modes an LLM working over a training log falls into repeatedly. They produced
+real wrong answers here before being written down.
+
+**Superlative claims — longest / heaviest / fastest / PR / "first time".** Before asserting any:
+
+1. **The query window must match the claimed window.** If a script prints several blocks with different date filters, never carry a result from a narrow block into a sentence about a wide one. (A "longest run in six weeks" claim was once computed from a 12-day filter.)
+2. **Cross-check against aggregates already on screen.** A maximum must be greater than or equal to the mean of the same set. `total / count` is one line of arithmetic and catches this instantly.
+3. **Check the boundary.** Re-run a "last 6 weeks" claim at 7 and 8 weeks. Big efforts cluster just outside arbitrary cut-offs, and a claim that flips when the boundary moves by a day was never real.
+4. **Trust the athlete's memory as a signal.** They have years of context your query window excludes. "I thought I did something longer" is evidence to re-run the query wider, not something to defend the first answer against.
+
+**Never characterise a number without its distribution.** "77 minutes a week, that's thin" was wrong: two thirds of that year's weeks were below it. Compute the mean, the spread and the athlete's own range before attaching an adjective.
+
+**Watch for hidden zero periods and mixed units when averaging.** Averaging six weeks that include a two-week travel gap describes neither the training nor the gap. And treadmill distance is unreliable, so a weekly total mixing treadmill and outdoor kilometres is part fiction — **track treadmill weeks by time, not distance.**
+
+**Don't compare across a device change.** Sleep-stage figures in particular are not comparable between watch generations — one device averaged 37 min of deep sleep a night where its replacement averaged 77 for the same person. An all-time median across a device switch is meaningless. Split the comparison at the changeover date.
+
+**Compute, don't eyeball.** Reading a number off rounded output produces confident errors — a displayed "90.0" that is really 89.97 breaks a `>= 90` streak you just claimed.
 
 ## Health & safety
 

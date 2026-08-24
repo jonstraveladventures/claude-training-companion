@@ -141,9 +141,16 @@ def sync(days: int = 365, deep_days: int = DEEP_DAYS, hr_floor_days: int = 21) -
             "rem_sleep_s": sdto.get("remSleepSeconds"),
             "light_sleep_s": sdto.get("lightSleepSeconds"),
             "awake_sleep_s": sdto.get("awakeSleepSeconds"),
+            # Overnight respiration (breaths/min). One of the few objective
+            # illness / alcohol / overreaching flags available, and it needs no
+            # subjective input — a steady baseline with a rise as the signal.
+            "resp_sleep_avg": sdto.get("averageRespirationValue"),
+            "resp_sleep_low": sdto.get("lowestRespirationValue"),
+            "resp_sleep_high": sdto.get("highestRespirationValue"),
             "resting_hr": stats.get("restingHeartRate"),
             "hr_floor": hr_floor,
             "hrv_overnight": hsum.get("lastNightAvg"),
+            "hrv_weekly_avg": hsum.get("weeklyAvg"),  # Garmin's own running baseline
             "hrv_status": hsum.get("status"),
             "body_battery_high": stats.get("bodyBatteryHighestValue"),
             "body_battery_low": stats.get("bodyBatteryLowestValue"),
@@ -165,14 +172,22 @@ def sync(days: int = 365, deep_days: int = DEEP_DAYS, hr_floor_days: int = 21) -
     return len(rows)
 
 
-# Columns Garmin only fills on some days (a qualifying run, a worn night, once
-# the HRV baseline exists). A sync with a short deep_days window must not blank
-# what an earlier, deeper sync stored, so these are COALESCEd rather than
-# overwritten. Everything else is authoritative on every pull.
-SPARSE = ("hrv_overnight", "hrv_status", "vo2max", "training_readiness",
-          "race_5k_s", "race_10k_s", "hr_floor",
+# Columns that must never be blanked by a null on re-sync. Two reasons a value
+# can be null: (a) sparse-by-design — Garmin only fills it on some days (a
+# qualifying run, a worn night, once the HRV baseline exists), and a short
+# deep_days window must not erase what a deeper sync stored; (b) occasionally-null
+# daily values — Garmin's algorithm sometimes returns no restingHeartRate / steps
+# / body-battery for a day whose other stats are present, and overwriting a
+# previously-good value with that null corrupts trends (the resting_hr - hr_floor
+# gap especially). COALESCE(new, old) keeps the old value when the new is null,
+# and still applies a genuine new (non-null) value, so corrections still work.
+SPARSE = ("hrv_overnight", "hrv_weekly_avg", "hrv_status", "vo2max",
+          "training_readiness", "race_5k_s", "race_10k_s", "hr_floor",
           "sleep_score", "sleep_duration_s", "deep_sleep_s", "rem_sleep_s",
-          "light_sleep_s", "awake_sleep_s")
+          "light_sleep_s", "awake_sleep_s",
+          "resp_sleep_avg", "resp_sleep_low", "resp_sleep_high",
+          "resting_hr", "steps", "body_battery_high", "body_battery_low",
+          "stress_avg")
 
 
 def _upsert(conn, rows: list[dict]) -> None:

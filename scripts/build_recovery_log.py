@@ -23,9 +23,10 @@ OUT = ROOT / "data" / "recovery_log.jsonl"
 COLS = [
     "date", "sleep_score", "sleep_duration_s", "deep_sleep_s", "rem_sleep_s",
     "light_sleep_s", "awake_sleep_s",
-    "resting_hr", "hr_floor", "hrv_overnight", "hrv_status", "body_battery_high",
-    "body_battery_low", "stress_avg", "steps", "vo2max", "training_readiness",
-    "race_5k_s", "race_10k_s",
+    "resp_sleep_avg", "resp_sleep_low", "resp_sleep_high",
+    "resting_hr", "hr_floor", "hrv_overnight", "hrv_weekly_avg", "hrv_status",
+    "body_battery_high", "body_battery_low", "stress_avg", "steps", "vo2max",
+    "training_readiness", "race_5k_s", "race_10k_s",
 ]
 # A row is worth keeping only if the watch actually captured something.
 SIGNAL = ["resting_hr", "sleep_duration_s", "hrv_overnight", "steps",

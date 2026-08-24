@@ -139,6 +139,10 @@ MIGRATIONS = {
         ("light_sleep_s", "INTEGER"),
         ("awake_sleep_s", "INTEGER"),
         ("hr_floor", "INTEGER"),
+        ("resp_sleep_avg", "REAL"),
+        ("resp_sleep_low", "REAL"),
+        ("resp_sleep_high", "REAL"),
+        ("hrv_weekly_avg", "REAL"),
     ],
 }
 
