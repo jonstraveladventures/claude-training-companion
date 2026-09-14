@@ -55,9 +55,12 @@ Trigger: "how was my sleep / last night", "pull my garmin/sleep data", "how was 
 5. Give a clear **green / amber / red** call tied to what's actually scheduled.
 6. **Persist it (durable, like strength/runs).** The pulled recovery + sleep data
    lives only in the gitignored DB until exported — run
-   `.venv/bin/python scripts/build_recovery_log.py` and
-   `.venv/bin/python scripts/build_sleep_curves.py`, then
-   `git add data/recovery_log.jsonl data/sleep_curves.jsonl && git commit -m "Recovery <date>"`.
+   `.venv/bin/python scripts/build_recovery_log.py`,
+   `.venv/bin/python scripts/build_sleep_curves.py` and
+   `.venv/bin/python scripts/build_hrv_trace.py`, then
+   `git add data/recovery_log.jsonl data/sleep_curves.jsonl data/hrv_trace.jsonl && git commit -m "Recovery <date>"`.
+   When reporting HRV, give Garmin's status band with the number and trust the band
+   (it weighs the multi-day trend; a single high night can still read UNBALANCED).
    (recovery_log holds the stage *totals*; sleep_curves holds the nightly *shape*,
    which can't be reconstructed once the API is gone.)
 
@@ -105,6 +108,10 @@ Pull from the SQLite DB + the JSONL and report:
   Log any machine-console reading the APIs don't carry (e.g. elliptical watts) into
   that session's `manual` block — it survives rebuilds. Never compare machine watts
   to running power, or across different (uncalibrated) machines.
+- **Rowing (Concept2):** drop a Logbook CSV export into `data/concept2_csv/` and run
+  `.venv/bin/python scripts/build_rowing_log.py`; commit `data/rowing_log.jsonl`. Use
+  the split-weighted HR, not the headline average, and compare watts across sessions
+  only at matching drag factor (see the caveats in `CLAUDE.md`).
 - **Bodyweight:** when the user reports a weight, append a manual line to
   `data/weight_log.jsonl`, run `.venv/bin/python scripts/build_weight_log.py`
   (merges Garmin weigh-ins, preserves manual entries), and commit. Bodyweight is

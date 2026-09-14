@@ -17,7 +17,7 @@ It connects to Strava (runs and rides) and Garmin Connect (sleep, HR, HRV, stres
 - **Morning recovery check:** pull last night's Garmin HR, stress and body-battery and get a green / amber / red call for the day's training.
 - **Strength logging:** tell Claude "I did 5×5 squat at 100 kg" and it appends a structured entry to an append-only JSONL (the single source of truth), rebuilds a per-exercise progression view, and commits to git.
 - **Run analysis:** pull a run from Strava, compute HR time-in-zone and cardiac drift against a polarisation target, and append it to a durable run log.
-- **Durable logs for everything else:** recovery (sleep score, stages, resting HR, derived overnight HR floor, HRV, body battery, VO2max, race predictions), the nightly sleep-stage curve, cross-training cardio (elliptical/bike/swim, with HR zones and drift), and bodyweight each get their own committed JSONL, rebuilt from the database so nothing lives only in the cache.
+- **Durable logs for everything else:** recovery (sleep score, stages, resting HR, derived overnight HR floor, HRV, body battery, VO2max, race predictions), the nightly sleep-stage curve, overnight HRV trace, cross-training cardio (elliptical/bike/swim, with HR zones and drift), Concept2 rowing (from Logbook exports) and bodyweight are each stored in their own committed JSONL log. The logs are rebuilt from the database, so the cache is never the only copy.
 - **Running power and dynamics:** on watches that record them (Forerunner 255+/265 generation), each run also carries running power, cadence, ground-contact time and vertical oscillation, none of which Strava keeps.
 - **Offline dashboard:** `build_dashboard.py` renders the `dashboard.html` shown above (strength progression, running volume and polarisation, recovery and fitness trends, bodyweight). It opens in any browser with no server.
 - **Training planning:** keep a living `TRAINING_PLAN.md` and have Claude cross-check each session against it.
@@ -52,9 +52,11 @@ strength_log.jsonl (committed) ─────────┤
                                         ├─► build_run_log.py        ─► run_log.jsonl        (committed) + CSV
                                         ├─► build_recovery_log.py   ─► recovery_log.jsonl   (committed)
                                         ├─► build_sleep_curves.py   ─► sleep_curves.jsonl   (committed)
+                                        ├─► build_hrv_trace.py      ─► hrv_trace.jsonl      (committed)
                                         ├─► build_cardio_log.py     ─► cardio_log.jsonl     (committed)
                                         ├─► build_weight_log.py     ─► weight_log.jsonl     (committed)
                                         └─► build_dashboard.py      ─► dashboard.html        (offline)
+Concept2 CSV exports ─► build_rowing_log.py ─► rowing_log.jsonl (committed)
 ```
 
 The JSONL files are the source of truth, committed to git. The SQLite database and any spreadsheets are derived views you can regenerate at any time.
@@ -73,7 +75,7 @@ The JSONL files are the source of truth, committed to git. The SQLite database a
    - **Strava:** create an app at <https://www.strava.com/settings/api> to get a client ID/secret, then run `python scripts/strava_auth.py` to obtain a refresh token.
    - **Garmin:** your normal Garmin Connect email and password (Garmin has no official API; this uses the community [`garminconnect`](https://github.com/cyberjunky/python-garminconnect) library).
 
-   `.env` is gitignored, so your credentials never leave your machine.
+   `.env` is gitignored, so your credentials never leave your machine. Strava may issue a new refresh token when the old one is used. The sync itself writes the new token back to `.env` atomically, with file mode 600, so token rotation cannot lock you out.
 
 3. **Initialise the database and run a first sync**
    ```bash
@@ -91,7 +93,7 @@ The JSONL files are the source of truth, committed to git. The SQLite database a
 ## Privacy & safety notes
 
 - All data stays local (SQLite, JSONL, and your `.env`). Nothing is uploaded anywhere except the API calls to your own Strava and Garmin accounts.
-- `data/` (the database, CSVs, images) and `.env` are gitignored by default. Only the JSONL logs are committed, so review them before pushing to any public remote.
+- `data/` (the database, CSVs and images) and `.env` are gitignored by default. Only the JSONL logs are committed. Keep the repository private if you commit them: git history is permanent and hard to scrub, and a repository can be made public by accident. To keep all health data out of git, replace the `data/...` lines in `.gitignore` with a bare `data` line, then make `data/` a symlink to a folder that your sync client already backs up (Dropbox, iCloud Drive or Syncthing). Every code path goes through `ROOT / "data"`, so nothing else needs to change. The sync replaces the cross-machine copy that `git push` provided. Tell the sync client to skip the SQLite file (`xattr -w com.dropbox.ignored 1 data/fitness.db` for Dropbox), so it does not copy a live database mid-write. The database is a rebuildable cache.
 - The Garmin integration uses your account password (no official API exists). Treat your `.env` accordingly and never commit it.
 - Built to pair with Claude Code's safety model: it asks before irreversible actions and never enters financial or credential data.
 
@@ -107,6 +109,10 @@ The JSONL files are the source of truth, committed to git. The SQLite database a
 | `REFERENCES.md` | Verified sports-science citations behind the methods and training choices |
 | `data/` | Local DB + derived views (gitignored) + committed JSONL logs |
 | `docs/` | README assets (the dashboard screenshot) |
+
+## Related projects
+
+[pm5-force-logger](https://github.com/jonstraveladventures/pm5-force-logger) logs a Concept2 PM5 over Bluetooth from a Mac. It records per-stroke force curves, provides a live dashboard and uploads to the Concept2 Logbook. It grew out of this project and uses the same pattern of a JSONL record and a rebuildable cache. If you row, `build_rowing_log.py` in this repository turns Logbook CSV exports into `data/rowing_log.jsonl`, which the dashboard stacks onto the cross-training chart.
 
 ## Credits
 

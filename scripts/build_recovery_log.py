@@ -3,11 +3,15 @@
 The `garmin_daily` table (sleep, resting HR, HRV, body battery, stress, VO2max,
 race predictions, training readiness) lives ONLY in the gitignored SQLite DB,
 pulled through an unofficial Garmin API. Runs, strength and rowing all have a
-committed JSONL export; recovery data had none — so a DB wipe or the Garmin
+committed JSONL export; recovery data had none, so a DB wipe or the Garmin
 library breaking would lose the entire basis of the morning recovery checks.
 
-This closes that gap: one committed line per day, same pattern as
-build_run_log.py. Idempotent — rebuilds wholesale from the DB every run.
+This closes that gap: one line per day. It MERGES with the existing file: a day
+the DB holds is refreshed from the DB (values do change on re-sync: hr_floor and
+the weekly HRV baseline arrive later), and a day the DB no longer holds keeps its
+archived line. The sync window is 365 days and this file already reaches back
+further, so a wholesale rewrite after a DB rebuild would have discarded the
+oldest months of the record it exists to protect.
 
 Run: .venv/bin/python scripts/build_recovery_log.py
 """
@@ -33,7 +37,16 @@ SIGNAL = ["resting_hr", "sleep_duration_s", "hrv_overnight", "steps",
           "body_battery_high", "vo2max"]
 
 
+def load_existing() -> dict:
+    if not OUT.exists():
+        return {}
+    return {r["date"]: r for r in
+            (json.loads(l) for l in OUT.read_text().splitlines() if l.strip())}
+
+
 def main():
+    merged = load_existing()
+    archived_only = set(merged)
     con = sqlite3.connect(DB)
     con.row_factory = sqlite3.Row
     have = {r[1] for r in con.execute("PRAGMA table_info(garmin_daily)")}
@@ -42,15 +55,20 @@ def main():
         f"SELECT {', '.join(cols)} FROM garmin_daily ORDER BY date"
     ).fetchall()
 
-    kept = 0
+    fresh = 0
+    for r in rows:
+        rec = {c: r[c] for c in cols}
+        if not any(rec.get(k) is not None for k in SIGNAL):
+            continue  # no-wear day (or a rate-limited empty row): nothing to preserve
+        merged[rec["date"]] = rec
+        archived_only.discard(rec["date"])
+        fresh += 1
+
     with open(OUT, "w") as f:
-        for r in rows:
-            rec = {c: r[c] for c in cols}
-            if not any(rec.get(k) is not None for k in SIGNAL):
-                continue  # no-wear day, nothing to preserve
-            f.write(json.dumps(rec) + "\n")
-            kept += 1
-    print(f"Wrote {OUT.relative_to(ROOT)}  ({kept} days with data of {len(rows)} total)")
+        for d in sorted(merged):
+            f.write(json.dumps(merged[d]) + "\n")
+    print(f"Wrote {OUT.relative_to(ROOT)}  ({len(merged)} days: {fresh} from the DB, "
+          f"{len(archived_only)} archived days the DB no longer holds)")
 
 
 if __name__ == "__main__":

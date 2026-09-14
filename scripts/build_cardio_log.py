@@ -1,7 +1,7 @@
 """Build the durable cardio log — non-run aerobic work (elliptical, bike, etc).
 
-Cross-training is a real part of the plan: it's how aerobic base gets built when
-the Achilles/legs need sparing (and it'll matter through the August ramp). But
+Cross-training is a real part of most plans: it's how aerobic base gets built when
+the legs need sparing (an injury, or the return from one). But
 build_run_log.py only tracks sport='Run', so these sessions lived ONLY in the
 gitignored SQLite DB — invisible to reviews and lost on any rebuild. This fixes
 that with the same treatment runs get: HR-zone distribution + cardiac drift.
@@ -31,6 +31,9 @@ sys.path.insert(0, str(ROOT / "src"))
 from fitness.zones import zone_dist, drift_quarters  # noqa: E402
 
 CARDIO_SPORTS = ("Workout", "Ride", "VirtualRide", "Swim", "StairStepper", "Elliptical")
+# Handled elsewhere or deliberately left out (see the docstring). Any other sport type
+# Strava sends is reported at the end of a build, so a new one can't vanish unnoticed.
+HANDLED_ELSEWHERE = ("Run", "Rowing", "VirtualRow", "WeightTraining", "Walk", "Yoga", "Pilates")
 MIN_MINUTES = 10   # below this it's not an aerobic session worth trending
 
 
@@ -119,6 +122,16 @@ def main():
     from collections import Counter
     for sp, n in Counter(r["sport"] for r in records).most_common():
         print(f"    {sp:14} {n}")
+    known = CARDIO_SPORTS + HANDLED_ELSEWHERE
+    ph = ",".join("?" * len(known))
+    other = con.execute(
+        f"SELECT sport, COUNT(*), ROUND(SUM(moving_time_s)/60.0) FROM activities "
+        f"WHERE sport NOT IN ({ph}) AND moving_time_s >= ? GROUP BY sport", known + (MIN_MINUTES * 60,)
+    ).fetchall()
+    if other:
+        print("  In no durable log (add to CARDIO_SPORTS or HANDLED_ELSEWHERE if that is wrong):")
+        for sp, n, mins in other:
+            print(f"    {sp:14} {n} session(s), {mins:.0f} min")
 
 
 if __name__ == "__main__":

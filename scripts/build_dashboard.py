@@ -12,7 +12,6 @@ import base64
 import io
 import json
 import re
-import sqlite3
 import sys
 from collections import defaultdict
 from datetime import date, datetime, timedelta
@@ -27,6 +26,8 @@ import matplotlib.ticker as mticker
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
 OUT = ROOT / "dashboard.html"
+sys.path.insert(0, str(ROOT / "src"))
+from fitness.exercise_names import canon  # noqa: E402  (same alias table as the sheet view)
 
 # ---------------------------------------------------------------------------
 # Palette (validated categorical set, dataviz skill reference palette).
@@ -44,6 +45,7 @@ SURFACE = "#fcfcfb"
 BASELINE = "#c3c2b7"
 GOOD = "#0ca30c"
 
+# >>> SET YOUR OWN <<< the lifts that get a progression panel (canonical names, as logged)
 KEY_LIFTS = [
     "back squat", "low-incline DB bench", "overhead press",
     "lat pulldown", "romanian deadlift", "seated dumbbell shoulder press",
@@ -110,7 +112,10 @@ def load_jsonl(path):
         for line in f:
             line = line.strip()
             if line:
-                out.append(json.loads(line))
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError as e:
+                    print(f"WARN {path}: skipped malformed line: {e}", file=sys.stderr)
     return out
 
 
@@ -124,14 +129,18 @@ def load_strength():
 
 
 def top_set(sets):
-    """Set with max weight_kg among sets that have a non-null weight_kg.
+    """The best logged set: heaviest weight, then most reps, then longest hold.
     Ties (same weight, multiple sets — the norm in double progression) break
     on the highest reps, so the reported set reflects the best performance at
-    that load rather than just the first set logged."""
-    candidates = [s for s in sets if s.get("weight_kg") is not None]
+    that load rather than just the first set logged. Bodyweight and isometric
+    sets (weight_kg null) count too; they used to be discarded, which made a
+    plank, a dragon flag or a tendon hold vanish from the session table."""
+    candidates = [s for s in sets if isinstance(s, dict)
+                  and (s.get("weight_kg") is not None or s.get("reps") or s.get("hold_s"))]
     if not candidates:
         return None
-    return max(candidates, key=lambda s: (s["weight_kg"], s.get("reps") or 0))
+    return max(candidates, key=lambda s: (s["weight_kg"] if s.get("weight_kg") is not None else -1,
+                                          s.get("reps") or 0, s.get("hold_s") or 0))
 
 
 MAINT_RE = re.compile(r"\b(maintenance|deload|de-load)\b", re.I)
@@ -154,23 +163,24 @@ def top_set_detail(sets):
     ts = top_set(sets)
     if not ts:
         return None
-    w = ts["weight_kg"]
-    n = sum(1 for s in sets if s.get("weight_kg") == w)
+    w = ts.get("weight_kg")
+    n = sum(1 for s in sets if isinstance(s, dict) and s.get("weight_kg") == w)
     return w, ts.get("reps"), ts.get("hold_s"), n
 
 
 def fmt_top_set(sets):
     """Compact 'Wkg N×reps' for the top working set — N×reps makes the double
-    progression legible (5×6 vs 5×8). Falls back to holds / bare weight."""
+    progression legible (5×6 vs 5×8). Bodyweight shows as 'BW'; holds in seconds."""
     d = top_set_detail(sets)
     if not d:
         return None
     w, reps, hold, n = d
+    label = f"{w:g}kg" if w is not None else "BW"
     if reps:
-        return f"{w:g}kg {n}&times;{reps}" if n > 1 else f"{w:g}kg&times;{reps}"
+        return f"{label} {n}&times;{reps}" if n > 1 else f"{label}&times;{reps}"
     if hold:
-        return f"{w:g}kg&times;{hold}s"
-    return f"{w:g}kg"
+        return f"{label} {n}&times;{hold}s" if n > 1 else f"{label}&times;{hold}s"
+    return label
 
 
 def load_runs():
@@ -183,7 +193,15 @@ def load_recovery():
     return recs
 
 
-PROTEIN_LO, PROTEIN_HI = 1.8, 2.2   # g/kg/day — vegetarian + concurrent training
+def load_cardio():
+    return load_jsonl(DATA / "cardio_log.jsonl")
+
+
+def load_rowing():
+    return load_jsonl(DATA / "rowing_log.jsonl")
+
+
+PROTEIN_LO, PROTEIN_HI = 1.8, 2.2   # g/kg/day — >>> SET YOUR OWN <<< (1.6–2.2 is the usual range)
 
 
 def load_weight():
@@ -240,9 +258,25 @@ def extract_section(md_text, heading):
 
 
 def inline_md(text):
+    text = esc(text)   # the plan is prose, so a literal < or & must not become markup
     text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"(?<!\*)\*(?!\*)(.+?)\*(?!\*)", r"<i>\1</i>", text)
     return text
+
+
+def md_table(block_lines):
+    """A markdown pipe table as a plain HTML table (header row, then body rows)."""
+    rows = []
+    for ln in block_lines:
+        cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+        if all(re.fullmatch(r":?-{2,}:?", c) for c in cells if c):
+            continue   # the |---|---| separator line
+        rows.append(cells)
+    if not rows:
+        return ""
+    head = "".join(f"<th>{inline_md(c)}</th>" for c in rows[0])
+    body = "".join("<tr>" + "".join(f"<td>{inline_md(c)}</td>" for c in r) + "</tr>" for r in rows[1:])
+    return f'<table class="sessions"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>'
 
 
 def md_to_html(md_text):
@@ -259,8 +293,8 @@ def md_to_html(md_text):
             for ln in block_lines:
                 html.append(f"<li>{inline_md(ln.strip()[2:])}</li>")
             html.append("</ul>")
-        elif block_lines[0].startswith("| "):
-            continue  # skip raw markdown tables in this simple renderer
+        elif block_lines[0].strip().startswith("|"):
+            html.append(md_table(block_lines))
         else:
             html.append(f"<p>{inline_md(' '.join(ln.strip() for ln in block_lines))}</p>")
     return "\n".join(html)
@@ -285,6 +319,15 @@ def week_start(d):
     return d - timedelta(days=d.weekday())  # Monday
 
 
+def last_calendar_weeks(weeks, end=None):
+    """The Mondays of the last `weeks` calendar weeks, ending with the current one.
+    Charts index by these so a week with nothing logged shows as a gap at zero;
+    taking "the last N weeks that have data" hid every zero week and made a
+    16-week chart quietly span 19."""
+    end = week_start(end or date.today())
+    return [end - timedelta(days=7 * k) for k in reversed(range(weeks))]
+
+
 def esc(s):
     if s is None:
         return ""
@@ -302,7 +345,7 @@ def build_snapshot_cards(sessions, runs, recovery, weight):
     squat_entries = []
     for s in sessions:
         for ex in s["exercises"]:
-            if ex["name"] == "back squat" and not is_maintenance(s, ex):
+            if canon(ex["name"]) == "back squat" and not is_maintenance(s, ex):
                 if top_set(ex["sets"]):
                     squat_entries.append((s["session_date"], ex["sets"]))
     if squat_entries:
@@ -327,9 +370,12 @@ def build_snapshot_cards(sessions, runs, recovery, weight):
         if r.get("counts_as_run") and r.get("distance_km")
         and parse_date(r["date"]) >= ws
     )
-    cards.append(("This week's running", f"{week_km:.1f} km", f"since {ws.isoformat()}"))
+    if runs:   # an empty run log is "no data", not a 0.0 km week
+        cards.append(("This week's running", f"{week_km:.1f} km", f"since {ws.isoformat()}"))
+    else:
+        cards.append(("This week's running", "—", "no runs logged"))
 
-    # Latest resting HR / HRV / VO2max / race 5k, from recovery_log (most recent non-null)
+    # Latest resting HR / HR floor / HRV / VO2max / race 5k, from recovery_log (most recent non-null)
     def latest_val(key):
         for r in reversed(recovery):
             if r.get(key) is not None:
@@ -339,8 +385,20 @@ def build_snapshot_cards(sessions, runs, recovery, weight):
     rhr, rhr_d = latest_val("resting_hr")
     cards.append(("Latest resting HR", f"{rhr:g} bpm" if rhr is not None else "—", rhr_d or "no data"))
 
+    # The derived overnight floor is the recovery number to lead with; Garmin's resting-HR
+    # scalar is inflated by a slow-to-settle early night, and the gap between them is itself
+    # the signal (CLAUDE.md, Data sources).
+    fl, fl_d = latest_val("hr_floor")
+    if fl is not None:
+        same_day = next((r for r in recovery if r["date"] == fl_d), {})
+        gap = same_day.get("resting_hr")
+        sub = f"{fl_d}, resting HR {gap - fl:+g} above it" if gap is not None else fl_d
+        cards.append(("Latest HR floor", f"{fl:g} bpm", sub))
+    else:
+        cards.append(("Latest HR floor", "—", "no data"))
+
     hrv, hrv_d = latest_val("hrv_overnight")
-    cards.append(("Latest overnight HRV", f"{hrv:g} ms" if hrv is not None else "—", hrv_d or "no data yet (newer-watch HRV baseline builds over ~3 weeks of wear)"))
+    cards.append(("Latest overnight HRV", f"{hrv:g} ms" if hrv is not None else "—", hrv_d or "no data (needs a watch that records HRV)"))
 
     vo2, vo2_d = latest_val("vo2max")
     cards.append(("Latest VO2max", f"{vo2:g}" if vo2 is not None else "—", vo2_d or "no data"))
@@ -364,9 +422,9 @@ def lift_series(sessions, lift_name):
     out = []
     for s in sessions:
         for ex in s["exercises"]:
-            if ex["name"] == lift_name:
+            if canon(ex["name"]) == lift_name:
                 ts = top_set(ex["sets"])
-                if ts:
+                if ts and ts.get("weight_kg") is not None:   # the charts plot load, so bodyweight sets stay out
                     w = ts["weight_kg"]
                     reps = ts.get("reps")
                     e1rm = w * (1 + reps / 30) if reps else None
@@ -470,7 +528,7 @@ def build_recent_sessions_table(sessions):
             detail = fmt_top_set(ex["sets"])
             if not detail:
                 continue
-            parts.append(f"{esc(ex['name'])} {detail}")
+            parts.append(f"{esc(canon(ex['name']))} {detail}")
         rows.append((s["session_date"], s.get("session_label", ""), "; ".join(parts)))
 
     html = ['<table class="sessions"><thead><tr><th>Date</th><th>Session</th><th>Top sets</th></tr></thead><tbody>']
@@ -489,8 +547,7 @@ def weekly_run_totals(runs, weeks=16):
         by_week[week_start(d)] += r["distance_km"]
     if not by_week:
         return []
-    weeks_sorted = sorted(by_week)[-weeks:]
-    return [(w, by_week[w]) for w in weeks_sorted]
+    return [(w, by_week.get(w, 0.0)) for w in last_calendar_weeks(weeks)]
 
 
 def build_running_volume(runs):
@@ -502,7 +559,7 @@ def build_running_volume(runs):
     ys = [km for _, km in weekly]
     ax.bar(xs, ys, width=5.0, color=CAT["blue"])
     ax.set_ylabel("km")
-    ax.set_title(f"Weekly running volume — last {len(weekly)} weeks (counts_as_run only)")
+    ax.set_title(f"Weekly running volume — last {len(weekly)} calendar weeks (counts_as_run; a missing bar is a zero week)")
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
     ax.tick_params(axis="x", rotation=30, labelsize=8.5)
     for x, y in zip(xs, ys):
@@ -535,11 +592,11 @@ def build_polarisation(runs):
     if not by_week:
         return no_data_note("No runs with HR-zone data yet.")
 
-    weeks_sorted = sorted(by_week)[-16:]
-    xs = weeks_sorted
-    z12 = [100 * by_week[w]["z12"] / by_week[w]["tot"] for w in xs]
-    z3 = [100 * by_week[w]["z3"] / by_week[w]["tot"] for w in xs]
-    z45 = [100 * by_week[w]["z45"] / by_week[w]["tot"] for w in xs]
+    xs = last_calendar_weeks(16)
+    share = lambda w, k: 100 * by_week[w][k] / by_week[w]["tot"] if by_week.get(w, {}).get("tot") else 0.0
+    z12 = [share(w, "z12") for w in xs]
+    z3 = [share(w, "z3") for w in xs]
+    z45 = [share(w, "z45") for w in xs]
 
     fig, ax = plt.subplots(figsize=(10, 3.8))
     ax.bar(xs, z12, width=5.0, color=CAT["blue"], label="Z1+Z2 (easy)")
@@ -551,7 +608,7 @@ def build_polarisation(runs):
                 textcoords="offset points", fontsize=8.5, color=GOOD)
     ax.set_ylabel("% of running time")
     ax.set_ylim(0, 108)
-    ax.set_title(f"Weekly polarisation — last {len(xs)} weeks (weighted by run duration)")
+    ax.set_title(f"Weekly polarisation — last {len(xs)} calendar weeks (weighted by run duration; no bar = no runs)")
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
     ax.tick_params(axis="x", rotation=30, labelsize=8.5)
     ax.legend(loc="upper center", ncol=3, fontsize=8.5, bbox_to_anchor=(0.5, -0.28))
@@ -567,37 +624,43 @@ def build_recovery_trends(recovery, days=90):
 
     parts = []
 
-    # Resting HR
+    # Resting HR, with the derived overnight floor beside it: the floor is the recovery
+    # number, and the gap between the two is the early-night load (CLAUDE.md, Data sources)
     rhr_pts = [(parse_date(r["date"]), r["resting_hr"]) for r in window if r.get("resting_hr") is not None]
+    floor_pts = [(parse_date(r["date"]), r["hr_floor"]) for r in window if r.get("hr_floor") is not None]
     if rhr_pts:
         fig, ax = plt.subplots(figsize=(10, 2.8))
-        ax.plot([p[0] for p in rhr_pts], [p[1] for p in rhr_pts], color=CAT["blue"], linewidth=1.6)
+        ax.plot([p[0] for p in rhr_pts], [p[1] for p in rhr_pts], color=CAT["blue"], linewidth=1.6,
+                label="Garmin resting HR")
+        if floor_pts:
+            ax.plot([p[0] for p in floor_pts], [p[1] for p in floor_pts], color=CAT["aqua"], linewidth=1.6,
+                    linestyle="--", label="Overnight HR floor (lowest 2%)")
+            ax.legend(loc="upper left", fontsize=8.5)
         ax.set_ylabel("bpm")
-        ax.set_title(f"Resting HR — last {days} days")
+        ax.set_title(f"Resting HR and overnight HR floor — last {days} days")
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
         ax.tick_params(axis="x", rotation=30, labelsize=8.5)
         fig.tight_layout()
-        parts.append(img_tag(fig, alt="Resting HR trend"))
+        parts.append(img_tag(fig, alt="Resting HR and HR floor trend"))
     else:
         parts.append(no_data_note("No resting HR data in this window."))
 
-    # Overnight HRV (sparse; only newer watches record it — see CLAUDE.md)
+    # Overnight HRV (sparse; only watches that record it — see CLAUDE.md)
     hrv_pts = [(parse_date(r["date"]), r["hrv_overnight"]) for r in window if r.get("hrv_overnight") is not None]
     if len(hrv_pts) >= 2:
         fig, ax = plt.subplots(figsize=(10, 2.8))
         ax.plot([p[0] for p in hrv_pts], [p[1] for p in hrv_pts], color=CAT["aqua"],
                  linewidth=1.6, marker="o", markersize=4)
         ax.set_ylabel("ms")
-        ax.set_title("Overnight HRV (newer watches only)")
+        ax.set_title(f"Overnight HRV, nightly average — last {days} days")
         ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
         ax.tick_params(axis="x", rotation=30, labelsize=8.5)
         fig.tight_layout()
         parts.append(img_tag(fig, alt="Overnight HRV trend"))
     else:
         parts.append(no_data_note(
-            "Not enough overnight HRV data yet. Older watches don't record it at all; "
-            "newer ones (Forerunner 255+/Vivoactive 5 generation) need ~3 weeks of consistent "
-            "wear before HRV status appears."))
+            "Not enough HRV data in this window: only a watch that records overnight HRV fills it "
+            "(Forerunner 255+/Vivoactive 5 generation, after ~3 weeks of consistent wear)."))
 
     # Sleep duration (hours)
     sleep_pts = [(parse_date(r["date"]), r["sleep_duration_s"] / 3600) for r in window if r.get("sleep_duration_s") is not None]
@@ -635,7 +698,84 @@ def build_recovery_trends(recovery, days=90):
     else:
         parts.append(no_data_note("No Body Battery data in this window."))
 
+    # Overnight/day avg stress
+    st_pts = [(parse_date(r["date"]), r["stress_avg"]) for r in window if r.get("stress_avg") is not None]
+    if st_pts:
+        fig, ax = plt.subplots(figsize=(10, 2.8))
+        ax.plot([p[0] for p in st_pts], [p[1] for p in st_pts], color=CAT["orange"], linewidth=1.6)
+        ax.axhline(16, color="#bbb", linestyle=":", linewidth=1)
+        ax.set_ylabel("avg stress")
+        ax.set_title(f"Average stress — last {days} days (target < 16)")
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
+        ax.tick_params(axis="x", rotation=30, labelsize=8.5)
+        fig.tight_layout()
+        parts.append(img_tag(fig, alt="Stress trend"))
+
+    # Garmin training readiness (newer watches only; sparse)
+    tr_pts = [(parse_date(r["date"]), r["training_readiness"]) for r in window if r.get("training_readiness") is not None]
+    if len(tr_pts) >= 2:
+        fig, ax = plt.subplots(figsize=(10, 2.8))
+        ax.plot([p[0] for p in tr_pts], [p[1] for p in tr_pts], color=CAT["blue"],
+                 linewidth=1.6, marker="o", markersize=3)
+        ax.set_ylabel("readiness")
+        ax.set_ylim(0, 100)
+        ax.set_title("Garmin training readiness")
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
+        ax.tick_params(axis="x", rotation=30, labelsize=8.5)
+        fig.tight_layout()
+        parts.append(img_tag(fig, alt="Training readiness trend"))
+
+    # Overnight respiration (avg + low/high band) — a rise flags illness / alcohol / overreaching
+    rsp_pts = [(parse_date(r["date"]), r.get("resp_sleep_avg"), r.get("resp_sleep_low"), r.get("resp_sleep_high"))
+               for r in window if r.get("resp_sleep_avg") is not None]
+    if len(rsp_pts) >= 2:
+        fig, ax = plt.subplots(figsize=(10, 2.8))
+        xs = [p[0] for p in rsp_pts]
+        ax.plot(xs, [p[1] for p in rsp_pts], color=CAT["aqua"], linewidth=1.6)
+        if all(p[2] is not None and p[3] is not None for p in rsp_pts):
+            ax.fill_between(xs, [p[2] for p in rsp_pts], [p[3] for p in rsp_pts],
+                            color=CAT["aqua"], alpha=0.15, linewidth=0)
+        ax.set_ylabel("breaths/min")
+        ax.set_title(f"Overnight respiration — last {days} days (a rise = illness/alcohol flag)")
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
+        ax.tick_params(axis="x", rotation=30, labelsize=8.5)
+        fig.tight_layout()
+        parts.append(img_tag(fig, alt="Respiration trend"))
+
     return '<div class="recovery-grid">' + "\n".join(f'<div class="rc-panel">{p}</div>' for p in parts) + "</div>"
+
+
+def build_cross_training(cardio, rowing, weeks=16):
+    """Weekly minutes of non-run aerobic cross-training (cardio_log.jsonl), plus rowing
+    if a rowing_log.jsonl exists: the aerobic work the running charts never see."""
+    cardio_wk, row_wk = defaultdict(float), defaultdict(float)
+    for c in cardio:
+        d, mins = c.get("date"), c.get("duration_min")
+        if d and mins:
+            cardio_wk[week_start(parse_date(d))] += mins
+    for r in rowing:
+        d, secs = r.get("date"), r.get("work_time_s")
+        if d and secs:
+            row_wk[week_start(parse_date(d))] += secs / 60
+    if not cardio_wk and not row_wk:
+        return no_data_note("No cross-training or rowing logged yet.")
+    allweeks = last_calendar_weeks(weeks)
+    fig, ax = plt.subplots(figsize=(10, 3.4))
+    cvals = [cardio_wk.get(w, 0) for w in allweeks]
+    rvals = [row_wk.get(w, 0) for w in allweeks]
+    ax.bar(allweeks, cvals, width=5.0, color=CAT["violet"], label="Cross-training (elliptical/bike/etc.)")
+    if row_wk:   # rowing_log.jsonl is optional (see README, Related projects)
+        ax.bar(allweeks, rvals, width=5.0, bottom=cvals, color=CAT["aqua"], label="Rowing")
+    ax.set_ylabel("minutes/week")
+    ax.set_title(f"Cross-training volume — last {len(allweeks)} calendar weeks (a missing bar is a zero week)")
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
+    ax.tick_params(axis="x", rotation=30, labelsize=8.5)
+    ax.legend(loc="upper left", fontsize=8.5)
+    fig.tight_layout()
+    note = ('<p style="font-size:0.82rem;color:#888;margin:0.3rem 0 0;">'
+            'Aerobic work that is not running: build_run_log.py never sees it, so it is '
+            'counted here rather than lost.</p>')
+    return img_tag(fig, alt="Cross-training and rowing volume") + "\n" + note
 
 
 def build_fitness_trends(recovery):
@@ -808,7 +948,7 @@ footer.page-footer { color: var(--ink-muted); font-size: 0.78rem; text-align: ce
 """
 
 
-def build_dashboard_html(sessions, runs, recovery, weight, plan_text):
+def build_dashboard_html(sessions, runs, recovery, weight, plan_text, cardio, rowing):
     dates_present = []
     if sessions:
         dates_present.append(max(s["session_date"] for s in sessions))
@@ -848,6 +988,11 @@ def build_dashboard_html(sessions, runs, recovery, weight, plan_text):
   <section id="polarisation">
     <h2>Polarisation</h2>
     {build_polarisation(runs)}
+  </section>
+
+  <section id="cross-training">
+    <h2>Cross-training</h2>
+    {build_cross_training(cardio, rowing)}
   </section>
 
   <section id="recovery-trends">
@@ -900,9 +1045,11 @@ def main():
     runs = load_runs()
     recovery = load_recovery()
     weight = load_weight()
+    cardio = load_cardio()
+    rowing = load_rowing()
     plan_text = (ROOT / "TRAINING_PLAN.md").read_text()
 
-    html = build_dashboard_html(sessions, runs, recovery, weight, plan_text)
+    html = build_dashboard_html(sessions, runs, recovery, weight, plan_text, cardio, rowing)
     OUT.write_text(html)
 
     size_kb = OUT.stat().st_size / 1024

@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from garminconnect import Garmin
 
 from .db import connect
+from .envfile import require
 
 # summaryDTO key -> our column. Everything sparse by nature (older watches /
 # strap-less runs leave dynamics null); we store whatever is present.
@@ -43,7 +44,7 @@ FIELDS = {
 
 
 def _client() -> Garmin:
-    g = Garmin(os.environ["GARMIN_EMAIL"], os.environ["GARMIN_PASSWORD"])
+    g = Garmin(require("GARMIN_EMAIL"), require("GARMIN_PASSWORD"))
     g.login()
     return g
 
@@ -58,14 +59,23 @@ def _extract(full: dict, garmin_id: int) -> dict:
     return row
 
 
-def sync(limit: int = 30, refresh: bool = False) -> int:
+def sync(limit: int = 200, refresh: bool = False) -> int:
     """Cache metrics for recent run-type Garmin activities. Returns rows written.
 
     `refresh=True` re-fetches even already-cached activities (use after a metric
     is added); otherwise only new activities cost an API call.
+
+    The listing is one request whatever the limit, and only uncached runs cost a
+    detail call, so ask for plenty. The old default of 30 counted walks and gym
+    sessions too, so on a rebuild from scratch it would have refilled only the last
+    couple of weeks of runs and build_run_log.py would then have stripped the power
+    and dynamics block from every older run in the durable log.
     """
     g = _client()
-    acts = g.get_activities(0, limit)
+    try:
+        acts = g.get_activities(0, limit, activitytype="running")   # every running subtype
+    except TypeError:   # an older garminconnect without the activitytype argument
+        acts = g.get_activities(0, limit)
     runs = [a for a in acts if "run" in ((a.get("activityType") or {}).get("typeKey") or "")]
 
     with connect() as conn:

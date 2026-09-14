@@ -84,6 +84,8 @@ rows = con.execute(
 # a machine twin's belt distance as the RELIABLE treadmill distance (the machine
 # measures it; the watch only guesses).
 def _is_machine(raw, name):
+    # Technogym uploads carry a .tcx external_id (prefixed "mwc_", its MyWellness cloud)
+    # and/or a machine name; any .tcx twin of a watch recording is taken as the machine.
     ext = (raw.get("external_id") or "").lower()
     nm = (name or "").lower()
     return ext.endswith(".tcx") or "excite" in nm or "run 7000" in nm or "technogym" in nm
@@ -150,7 +152,8 @@ for row, machine_dist_m, dup_ids in deduped:
     pace = None
     if dist_km and mov_s:
         p = (mov_s / 60) / dist_km
-        pace = f"{int(p)}:{int(round((p - int(p)) * 60)):02d}"
+        m, s = divmod(int(round(p * 60)), 60)   # rounds 6:59.6 to 7:00, never "6:60"
+        pace = f"{m}:{s:02d}"
 
     rec = {
         "activity_id": aid,

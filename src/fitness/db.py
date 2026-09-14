@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS garmin_intraday (
 );
 
 -- Per-activity Garmin metrics the Strava feed drops: running power and running
--- dynamics (only the FR265 records these; strap-dependent dynamics are sparse).
+-- dynamics (only some watches record these; strap-dependent dynamics are sparse).
 -- Joined onto Strava runs by start-time in build_run_log.py.
 CREATE TABLE IF NOT EXISTS garmin_activities (
     garmin_id INTEGER PRIMARY KEY,

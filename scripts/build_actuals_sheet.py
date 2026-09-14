@@ -7,31 +7,28 @@ Two sections:
 Run: python scripts/build_actuals_sheet.py
 Outputs: data/actuals_log.csv  (upload to Google Sheets as a new/refreshed sheet)
 """
-import json, csv, io
+import json, csv, io, sys
 from pathlib import Path
 from collections import defaultdict
 
 ROOT = Path(__file__).resolve().parents[1]
 LOG = ROOT / "data" / "strength_log.jsonl"
-
-# Display-name aliases: canonicalise variant names so each lift is ONE row in the
-# views, without editing the JSONL (which stays the verbatim source of truth).
-# Add new aliases here as variants appear.
-ALIASES = {
-    "pallof press (band)": "pallof press",
-    "face pull": "face pulls",
-    "seated 45-degree row (machine, chest-supported alt)": "chest-supported row",
-    "high-cable single-arm lateral raise": "high-cable lateral raise",
-}
-def canon(name):
-    return ALIASES.get(name, name)
+sys.path.insert(0, str(ROOT / "src"))
+from fitness.exercise_names import canon  # noqa: E402  (one alias table for every view)
 
 entries = []
 with open(LOG) as f:
     for line in f:
         line = line.strip()
         if line:
-            entries.append(json.loads(line))
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError as e:
+                print(f"WARN strength_log: skipped malformed line: {e}", file=sys.stderr)
+# Honour corrections: a later entry with correction_of=<logged_at> supersedes that
+# original entry (which is dropped). The append-only JSONL stays the source of truth.
+superseded = {e.get("correction_of") for e in entries if e.get("correction_of")}
+entries = [e for e in entries if e.get("logged_at") not in superseded]
 entries.sort(key=lambda e: e["session_date"])
 
 def top_set(ex):
@@ -49,21 +46,26 @@ def top_set(ex):
 
 # Collect all exercises and all dates
 all_dates = sorted({e["session_date"] for e in entries})
-ex_history = defaultdict(dict)   # exercise -> {date: "reps×weight"}
+best = defaultdict(dict)   # exercise -> {date: (weight or -1, reps or 0, n_sets)}
 for e in entries:
     d = e["session_date"]
     for ex in e["exercises"]:
         name = canon(ex["name"])
         reps, wt, nsets = top_set(ex)
-        if wt is not None:
-            cell = f"{wt:g}×{reps}×{nsets}" if reps else f"{wt:g}"
-        elif reps is not None:
-            cell = f"BW×{reps}×{nsets}"
-        else:
-            cell = "BW"
-        # if same exercise twice in a session keep the heavier
-        prev = ex_history[name].get(d)
-        ex_history[name][d] = cell if prev is None else prev  # first wins; rare dup
+        # the same exercise twice on one date (two sessions): the heavier top set wins
+        cand = (wt if wt is not None else -1, reps or 0, nsets)
+        if d not in best[name] or cand[:2] > best[name][d][:2]:
+            best[name][d] = cand
+
+
+def cell(t):
+    wt, reps, nsets = t
+    if wt >= 0:
+        return f"{wt:g}×{reps}×{nsets}" if reps else f"{wt:g}"
+    return f"BW×{reps}×{nsets}" if reps else "BW"
+
+
+ex_history = {name: {d: cell(t) for d, t in by_date.items()} for name, by_date in best.items()}
 
 out = io.StringIO()
 w = csv.writer(out)

@@ -80,16 +80,8 @@ resp = json.loads(urllib.request.urlopen(req).read())
 refresh = resp["refresh_token"]
 print(f"Refresh token: {refresh}")
 
-lines = ENV.read_text().splitlines()
-out = []
-replaced = False
-for line in lines:
-    if line.startswith("STRAVA_REFRESH_TOKEN="):
-        out.append(f"STRAVA_REFRESH_TOKEN={refresh}")
-        replaced = True
-    else:
-        out.append(line)
-if not replaced:
-    out.append(f"STRAVA_REFRESH_TOKEN={refresh}")
-ENV.write_text("\n".join(out) + "\n")
+sys.path.insert(0, str(ROOT / "src"))
+from fitness.envfile import set_env_var  # noqa: E402  (atomic write; keeps the rest of .env)
+
+set_env_var("STRAVA_REFRESH_TOKEN", refresh, ENV)
 print("Wrote STRAVA_REFRESH_TOKEN to .env. Done.")

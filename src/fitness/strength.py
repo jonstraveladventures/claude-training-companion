@@ -19,10 +19,19 @@ def ingest() -> int:
         if not l:
             continue
         try:
-            entries.append((l, json.loads(l)))
+            entry = json.loads(l)
         except json.JSONDecodeError as e:
             print(f"WARN strength_log.jsonl:{n} skipped malformed line: {e}",
                   file=sys.stderr)
+            continue
+        # Valid JSON without the keys the insert needs would raise KeyError inside the
+        # transaction below, and sqlite's context manager then rolls back the whole
+        # ingest, purges included. Skip the entry instead.
+        if not isinstance(entry, dict) or not entry.get("logged_at") or not entry.get("session_date"):
+            print(f"WARN strength_log.jsonl:{n} skipped entry without logged_at/session_date",
+                  file=sys.stderr)
+            continue
+        entries.append((l, entry))
     # correction_of supersession: a later entry with correction_of=<logged_at>
     # replaces that original, which must NOT live in the DB or it double-counts.
     # The two committed builders already honour this; ingest() must too.
@@ -77,10 +86,15 @@ def ingest() -> int:
             session_id = cur.lastrowid
             set_rows = []
             for ex in entry.get("exercises", []):
+                name = ex.get("name") if isinstance(ex, dict) else None
+                if not name:
+                    print(f"WARN strength_log.jsonl: {entry['logged_at']} has an exercise "
+                          f"without a name; that exercise was skipped", file=sys.stderr)
+                    continue
                 for i, s in enumerate(ex.get("sets", [])):
                     set_rows.append((
                         session_id,
-                        ex["name"],
+                        name,
                         i,
                         s.get("reps"),
                         s.get("weight_kg"),

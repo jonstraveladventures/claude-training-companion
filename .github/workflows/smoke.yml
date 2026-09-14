@@ -1,0 +1,38 @@
+name: smoke test
+
+# The quick start, without credentials: install, initialise the database, ingest the
+# example strength log, and build the views and the dashboard from it. Catches a
+# broken import or a builder that no longer runs on an empty repo.
+on:
+  push:
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -r requirements.txt
+      - run: python -m compileall -q src scripts
+      - run: cp data/strength_log.example.jsonl data/strength_log.jsonl
+      - run: python scripts/init_db.py
+      - run: python scripts/ingest_strength.py
+      - run: python scripts/build_actuals_sheet.py
+      - run: python scripts/build_recovery_log.py
+      - run: python scripts/build_run_log.py
+      - run: python scripts/build_cardio_log.py
+      - run: python scripts/build_sleep_curves.py
+      - run: python scripts/build_hrv_trace.py
+      - run: python scripts/build_dashboard.py
+      - name: sync without credentials must fail with a plain message
+        run: |
+          set +e
+          out=$(python scripts/sync.py 2>&1); rc=$?
+          echo "$out"
+          test $rc -ne 0 && echo "$out" | grep -q "is not set"

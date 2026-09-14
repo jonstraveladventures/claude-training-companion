@@ -1,5 +1,6 @@
 import json
-import os
+import time
+from collections import Counter
 from datetime import date, timedelta
 
 from garminconnect import Garmin
@@ -9,17 +10,35 @@ except ImportError:  # exposed under .exceptions in some library versions
     from garminconnect.exceptions import GarminConnectTooManyRequestsError
 
 from .db import connect
+from .envfile import require
 
 # Endpoints that only ever return data for recent dates, and cost one request
 # per day. Fetching them across the full 365-day window would triple the request
 # count for nothing (and Garmin rate-limits hard), so keep them to a short tail.
 DEEP_DAYS = 45
+MAX_CONSECUTIVE_429 = 5   # after this many rate-limited days in a row, stop and say so
 
 
 def _client() -> Garmin:
-    g = Garmin(os.environ["GARMIN_EMAIL"], os.environ["GARMIN_PASSWORD"])
+    g = Garmin(require("GARMIN_EMAIL"), require("GARMIN_PASSWORD"))
     g.login()
     return g
+
+
+FAILED = object()   # sentinel: the call raised (as opposed to returning nothing)
+
+
+def _try(fn, what: str, fails: Counter, default=None):
+    """One endpoint call. A rate limit propagates (the whole day is skipped); any other
+    failure is counted under `what` and returns FAILED, so a broken endpoint shows up in
+    the end-of-sync summary instead of silently leaving a column empty."""
+    try:
+        return fn() or default
+    except GarminConnectTooManyRequestsError:
+        raise
+    except Exception as e:
+        fails[f"{what}: {type(e).__name__}"] += 1
+        return FAILED
 
 
 def _first(payload):
@@ -82,55 +101,47 @@ def sync(days: int = 365, deep_days: int = DEEP_DAYS, hr_floor_days: int = 21) -
     races = _race_series(g, oldest.isoformat(), today.isoformat())
 
     rows = []
+    fails, skipped, run_of_429 = Counter(), 0, 0
     for i in range(days):
         d = today - timedelta(days=i)
         ds = d.isoformat()
         # On a 429 skip the whole date rather than upsert a partial row — a
-        # rate-limited empty response is NOT "no data for this day".
+        # rate-limited empty response is NOT "no data for this day" (COALESCE keeps
+        # what an earlier sync stored). Back off, and give up after a run of them
+        # rather than burning through every remaining date in seconds.
         try:
-            stats = g.get_stats(ds) or {}
-        except GarminConnectTooManyRequestsError:
-            continue
-        except Exception:
-            continue
-        try:
-            hrv = g.get_hrv_data(ds) or {}
-        except GarminConnectTooManyRequestsError:
-            continue
-        except Exception:
-            hrv = {}
-        try:
-            sleep = g.get_sleep_data(ds) or {}
-        except GarminConnectTooManyRequestsError:
-            continue
-        except Exception:
-            sleep = {}
-
-        mm, tr = {}, {}
-        if i < deep_days:
-            try:
-                mm = g.get_max_metrics(ds) or {}
-            except Exception:
-                mm = {}
-            try:
-                tr = g.get_training_readiness(ds) or {}
-            except Exception:
-                tr = {}
-
-        sdto = sleep.get("dailySleepDTO", {}) or {}
-
-        # True overnight HR floor, derived from the intraday trajectory — cleaner
-        # than Garmin's restingHeartRate scalar, which a slow-to-settle night
-        # inflates. Recent window only (one call/day); older floors are preserved
-        # by COALESCE. The gap (resting_hr - hr_floor) measures early-night load.
-        hr_floor = None
-        if i < hr_floor_days:
-            try:
-                hr_floor = _overnight_hr_floor(g, ds, sdto)
-            except GarminConnectTooManyRequestsError:
+            stats = _try(lambda: g.get_stats(ds), "stats", fails, {})
+            if stats is FAILED:
+                skipped += 1    # no stats, no row: an all-null row would blank the day's raw_json
                 continue
-            except Exception:
-                hr_floor = None
+            hrv = _try(lambda: g.get_hrv_data(ds), "hrv", fails, {})
+            sleep = _try(lambda: g.get_sleep_data(ds), "sleep", fails, {})
+            mm, tr = {}, {}
+            if i < deep_days:
+                mm = _try(lambda: g.get_max_metrics(ds), "max_metrics", fails, {})
+                tr = _try(lambda: g.get_training_readiness(ds), "training_readiness", fails, {})
+            hrv, sleep, mm, tr = ({} if v is FAILED else v for v in (hrv, sleep, mm, tr))
+            sdto = sleep.get("dailySleepDTO", {}) or {}
+            # True overnight HR floor, derived from the intraday trajectory — cleaner
+            # than Garmin's restingHeartRate scalar, which a slow-to-settle night
+            # inflates. Recent window only (one call/day); older floors are preserved
+            # by COALESCE. The gap (resting_hr - hr_floor) measures early-night load.
+            hr_floor = None
+            if i < hr_floor_days:
+                hr_floor = _try(lambda: _overnight_hr_floor(g, ds, sdto), "hr_floor", fails)
+                hr_floor = None if hr_floor is FAILED else hr_floor
+        except GarminConnectTooManyRequestsError:
+            fails["rate limited (day skipped)"] += 1
+            skipped += 1
+            run_of_429 += 1
+            if run_of_429 >= MAX_CONSECUTIVE_429:
+                print(f"  garmin_sync: rate limited {run_of_429} days running at {ds}; "
+                      f"stopping here (earlier dates keep their stored values). Re-run later.",
+                      flush=True)
+                break
+            time.sleep(min(15 * run_of_429, 60))
+            continue
+        run_of_429 = 0
         hsum = hrv.get("hrvSummary") or {}
         race = races.get(ds, {})
         rows.append({
@@ -169,6 +180,9 @@ def sync(days: int = 365, deep_days: int = DEEP_DAYS, hr_floor_days: int = 21) -
 
     with connect() as conn:
         _upsert(conn, rows)
+    if fails:
+        print(f"  garmin_sync: {len(rows)} of {days} days upserted, {skipped} skipped; "
+              + ", ".join(f"{k} x{v}" for k, v in fails.most_common()), flush=True)
     return len(rows)
 
 

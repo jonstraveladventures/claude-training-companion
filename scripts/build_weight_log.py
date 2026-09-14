@@ -2,9 +2,9 @@
 
 `data/weight_log.jsonl` is the committed source of truth (one line per weigh-in).
 It carries two kinds of entry:
-  - source="garmin" — weigh-ins pulled from Garmin Connect (he sometimes enters
-    them there); this script syncs any it doesn't already have.
-  - source="manual" — appended by Claude when he just tells me a number in chat.
+  - source="garmin" — weigh-ins pulled from Garmin Connect (a connected scale, or
+    entered in the app); this script syncs any it doesn't already have.
+  - source="manual" — appended by Claude when you report a number in chat.
     These are preserved; the sync never overwrites or drops them.
 
 Merged by date (an existing local entry wins, so manual notes survive), sorted,
@@ -16,7 +16,7 @@ power-to-weight on runs. Keep it current.
 Run: .venv/bin/python scripts/build_weight_log.py
 """
 import json
-import os
+import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -24,9 +24,11 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
+sys.path.insert(0, str(ROOT / "src"))
+from fitness.envfile import require  # noqa: E402
 OUT = ROOT / "data" / "weight_log.jsonl"
 
-PROTEIN_LO, PROTEIN_HI = 1.8, 2.2   # g/kg/day — vegetarian + concurrent training
+PROTEIN_LO, PROTEIN_HI = 1.8, 2.2   # g/kg/day — >>> SET YOUR OWN <<< (1.6–2.2 is the usual range)
 
 
 def load_existing():
@@ -41,11 +43,11 @@ def fetch_garmin(start="2020-01-01"):
     the local log is the source of truth and must survive an API outage."""
     try:
         from garminconnect import Garmin
-        g = Garmin(os.environ["GARMIN_EMAIL"], os.environ["GARMIN_PASSWORD"])
+        g = Garmin(require("GARMIN_EMAIL"), require("GARMIN_PASSWORD"))
         g.login()
         bc = g.get_body_composition(start, date.today().isoformat()) or {}
     except Exception as e:
-        print(f"  (Garmin fetch failed: {type(e).__name__} — keeping local log only)")
+        print(f"  (Garmin fetch failed: {type(e).__name__}: {e} — keeping local log only)")
         return {}
     out = {}
     for e in bc.get("dateWeightList") or []:

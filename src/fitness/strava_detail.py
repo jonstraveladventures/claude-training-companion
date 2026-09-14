@@ -13,22 +13,12 @@ from stravalib import Client
 from stravalib.exc import RateLimitExceeded, Fault
 
 from .db import connect
+from .strava_sync import client as _client   # one login path, so a rotated token is saved once
 
 STREAM_TYPES = [
     "time", "heartrate", "watts", "cadence",
     "velocity_smooth", "altitude", "distance", "temp",
 ]
-
-
-def _client() -> Client:
-    c = Client()
-    token = c.refresh_access_token(
-        client_id=int(os.environ["STRAVA_CLIENT_ID"]),
-        client_secret=os.environ["STRAVA_CLIENT_SECRET"],
-        refresh_token=os.environ["STRAVA_REFRESH_TOKEN"],
-    )
-    c.access_token = token["access_token"]
-    return c
 
 
 def _needs_detail(conn, activity_id: int) -> bool:

@@ -10,17 +10,30 @@ from datetime import datetime, timedelta, timezone
 from stravalib import Client
 
 from .db import connect
+from .envfile import require, set_env_var
 
 
-def _client() -> Client:
+def client() -> Client:
+    """A logged-in stravalib client.
+
+    Strava's docs say of the refresh token: "expect that this value can change anytime
+    you retrieve a new access token", after which the old one stops working. So a changed
+    token is written straight back to .env (a sync that throws the rotated token away
+    dies quietly the next time it runs)."""
     c = Client()
     token = c.refresh_access_token(
-        client_id=int(os.environ["STRAVA_CLIENT_ID"]),
-        client_secret=os.environ["STRAVA_CLIENT_SECRET"],
-        refresh_token=os.environ["STRAVA_REFRESH_TOKEN"],
+        client_id=int(require("STRAVA_CLIENT_ID")),
+        client_secret=require("STRAVA_CLIENT_SECRET"),
+        refresh_token=require("STRAVA_REFRESH_TOKEN"),
     )
     c.access_token = token["access_token"]
+    new = token.get("refresh_token")
+    if new and new != os.environ.get("STRAVA_REFRESH_TOKEN"):
+        set_env_var("STRAVA_REFRESH_TOKEN", new)
     return c
+
+
+_client = client
 
 
 def sync(days: int | None = None) -> int:
@@ -37,10 +50,12 @@ def sync(days: int | None = None) -> int:
             a.start_date.isoformat() if a.start_date else None,
             (a.sport_type.root if a.sport_type else (a.type.root if a.type else None)),
             a.name,
-            float(a.distance) if a.distance else None,
+            # `is not None`, not truthiness: a flat or treadmill run reports 0 m of climb,
+            # and 0 is a measurement, not a missing value (142 runs were stored NULL before).
+            float(a.distance) if a.distance is not None else None,
             int(a.moving_time) if a.moving_time is not None else None,
             int(a.elapsed_time) if a.elapsed_time is not None else None,
-            float(a.total_elevation_gain) if a.total_elevation_gain else None,
+            float(a.total_elevation_gain) if a.total_elevation_gain is not None else None,
             a.average_heartrate,
             a.max_heartrate,
             a.average_watts,
