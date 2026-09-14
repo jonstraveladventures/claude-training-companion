@@ -10,7 +10,8 @@ Deliberately EXCLUDED, to avoid double-counting or noise:
   - Run            -> run_log.jsonl
   - Rowing/VirtualRow -> rowing_log.jsonl (authoritative, from Concept2 exports)
   - WeightTraining -> strength_log.jsonl
-  - Walk           -> incidental daily movement, not training (tracked via steps)
+  - Walk           -> incidental daily movement, not training (tracked via steps).
+                      A Hike is different: a deliberate aerobic session, so it counts.
   - Yoga/Pilates   -> mobility, not aerobic training
 
 Zones come from fitness.zones (shared with build_run_log.py — one source of truth).
@@ -30,7 +31,7 @@ DB = ROOT / "data" / "fitness.db"
 sys.path.insert(0, str(ROOT / "src"))
 from fitness.zones import zone_dist, drift_quarters  # noqa: E402
 
-CARDIO_SPORTS = ("Workout", "Ride", "VirtualRide", "Swim", "StairStepper", "Elliptical")
+CARDIO_SPORTS = ("Workout", "Ride", "VirtualRide", "Swim", "StairStepper", "Elliptical", "Hike")
 # Handled elsewhere or deliberately left out (see the docstring). Any other sport type
 # Strava sends is reported at the end of a build, so a new one can't vanish unnoticed.
 HANDLED_ELSEWHERE = ("Run", "Rowing", "VirtualRow", "WeightTraining", "Walk", "Yoga", "Pilates")
