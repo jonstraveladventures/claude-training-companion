@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "data" / "concept2_csv"
 API_CACHE = ROOT / "data" / "concept2_api_cache.json"
 OUT = ROOT / "data" / "rowing_log.jsonl"
+PM5_SESSIONS = [ROOT / "data" / "pm5" / "sessions", ROOT / "data" / "sessions"]   # pm5-force-logger output
 
 TYPE_MAP = {"rower": "RowErg", "skierg": "SkiErg", "bike": "BikeErg"}
 
@@ -81,6 +82,47 @@ def _from_api(r: dict) -> dict:
                     s.get("stroke_rate"), (s.get("heart_rate") or {}).get("average")]
                    for s in splits] or None,
     }
+
+
+def _pm5_sessions() -> dict:
+    """pm5-force-logger session files keyed by the Logbook id they were posted as."""
+    out = {}
+    for d in PM5_SESSIONS:
+        for f in sorted(d.glob("*.json")) if d.exists() else []:
+            try:
+                sess = json.loads(f.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+            if sess.get("logbook_id"):
+                out[int(sess["logbook_id"])] = (f, sess)
+    return out
+
+
+def _enrich_from_pm5(rec: dict, sess: dict, path) -> None:
+    """Fill what the Logbook copy of a logger-posted row lacks: the PM5's summary reports HR as 0,
+    so the API row has no average HR and no splits, though every stroke carries HR."""
+    strokes = [st for st in sess.get("strokes") or [] if st.get("distance_m") is not None]
+    beats = [st["hr"] for st in strokes if st.get("hr")]
+    if rec.get("avg_hr") is None and beats:
+        rec["avg_hr"] = round(sum(beats) / len(beats))
+    summary = sess.get("summary") or {}
+    n = summary.get("split_count") or 0
+    if rec.get("splits") is None and n > 1 and rec.get("work_distance_m") and strokes:
+        size = rec["work_distance_m"] / n           # distance splits (the logger posts only those)
+        splits, prev_t = [], 0.0
+        for k in range(1, n + 1):
+            inside = [st for st in strokes if (k - 1) * size < st["distance_m"] <= k * size]
+            if not inside:
+                continue
+            t_end = inside[-1]["elapsed_s"] if k < n else rec["work_time_s"]
+            hrs = [st["hr"] for st in inside if st.get("hr")]
+            spm = [st["spm"] for st in inside if st.get("spm")]
+            splits.append([round(t_end - prev_t, 1), round(size),
+                           round(sum(spm) / len(spm)) if spm else None,
+                           round(sum(hrs) / len(hrs)) if hrs else None])
+            prev_t = t_end
+        rec["splits"] = splits or None
+    rec["pm5_session"] = path.name
 
 
 def _int(x):
@@ -143,6 +185,13 @@ def main():
             rows[str(rec["log_id"])] = rec
             n_api += 1
 
+    pm5 = _pm5_sessions()
+    n_pm5 = 0
+    for lid, rec in rows.items():
+        if int(lid) in pm5:
+            _enrich_from_pm5(rec, pm5[int(lid)][1], pm5[int(lid)][0])
+            n_pm5 += 1
+
     out = sorted(rows.values(), key=lambda x: (x["datetime"], x["log_id"]))
     with open(OUT, "w") as fh:
         for o in out:
@@ -151,7 +200,8 @@ def main():
     dates = [o["date"] for o in out]
     total_m = sum(o["work_distance_m"] or 0 for o in out)
     print(f"Wrote {len(out)} rowing workouts -> {OUT}")
-    print(f"  sources: {len(files)} CSV file(s) -> {from_csv} rows; API cache -> {n_api} rows")
+    print(f"  sources: {len(files)} CSV file(s) -> {from_csv} rows; API cache -> {n_api} rows; "
+          f"{n_pm5} enriched from pm5-force-logger sessions")
     if dates:
         print(f"  date range {min(dates)} .. {max(dates)}")
     print(f"  total work distance: {total_m:,} m ({total_m/1000:.1f} km)")
