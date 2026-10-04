@@ -20,7 +20,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -r requirements.txt
       - run: python -m compileall -q src scripts
-      - run: cp data/strength_log.example.jsonl data/strength_log.jsonl
+      - run: mkdir -p data && cp examples/strength_log.example.jsonl data/strength_log.jsonl
       - run: python scripts/init_db.py
       - run: python scripts/ingest_strength.py
       - run: python scripts/build_actuals_sheet.py

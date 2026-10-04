@@ -4,11 +4,9 @@ __pycache__/
 .env
 .env.*
 .DS_Store
-data/fitness.db
-data/*.png
-data/*.csv
-data/*.b64
-# Keep the committed JSONL logs; ignore everything else generated in data/
+# Training and health data never goes into git. A bare `data` also covers data/ as a
+# symlink to a synced folder.
+data
 
-# Generated, regenerable derived views (rebuild from the committed JSONL logs)
+# Generated, regenerable derived views (rebuilt from the JSONL logs)
 dashboard.html

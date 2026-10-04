@@ -3,6 +3,19 @@
 > This file tells Claude Code how to behave in your training repo. Edit the
 > `[PLACEHOLDER]` sections to your own goals, constraints, units, and timezone.
 
+## Where the data lives
+
+Training and health data stays out of git. `.gitignore` ignores `data` outright, so a log
+can't be committed or pushed by accident; git history is permanent and a repository can be
+made public by mistake. The example log lives in `examples/`.
+
+- Writing a JSONL is the save. There is no commit step for data: never `git add` anything
+  under `data/`, and never `git add -f`.
+- The JSONL logs are the durable record and the SQLite DB is a rebuildable cache. Back the
+  logs up the way you back up anything else, or make `data/` a symlink to a folder your sync
+  client already covers (see the README's privacy section).
+- The repository holds code, `TRAINING_PLAN.md`, the skill and this file.
+
 ## Strength logging (mobile-friendly)
 
 When the user describes a strength workout — whether in chat ("just did 5x5 squats at 100kg") or asks to log one — append one JSON object per line to `data/strength_log.jsonl`. Do NOT rewrite the file, only append.
@@ -47,41 +60,40 @@ Logging is the single most important durable output of this project. Process:
 2. **Confirm visibly** at the end with the literal line: `✓ Logged to strength_log.jsonl`.
 3. **Regenerate views**: run `python scripts/build_actuals_sheet.py`.
 4. **Periodic audit**: every few weeks, cross-check the JSONL against session count and backfill gaps (`correction_of: null` + a retrospective note).
-5. **Commit to git** after logging: `git add data/strength_log.jsonl && git commit -m "Log <date> session"`. (If you keep `data/` out of git altogether, as the README's privacy section describes, the append itself is the save: skip this step and never `git add` anything under `data/`.)
 
 The JSONL is the **single source of truth**. Spreadsheets and the SQLite DB are derived views regenerated from it.
 
 ### Never
 
 - Never edit existing lines in `strength_log.jsonl`. Corrections go in a NEW entry with `"correction_of": "<logged_at of bad entry>"`.
+- Never use `correction_of` for an exercise added to a session after the fact: every reader drops the corrected entry wholesale, so the addition would replace the whole session. Log it as its own entry.
 - Never write strength data directly to the SQLite DB from chat — that's `scripts/ingest_strength.py`'s job.
 
 ## Run tracking (durable, like strength)
 
-Runs come from Strava → the gitignored SQLite DB, so without this they have **no durable in-repo record**.
+Runs come from Strava into the SQLite DB, which is a cache, so without this they have **no durable record**.
 
 - After any run analysis, run `python scripts/build_run_log.py`. It regenerates:
-  - `data/run_log.jsonl` — **committed, durable** one-line-per-run record (date, distance, pace, HR, zone %, cardiac drift; treadmill runs flagged `pace_reliable: false`).
-  - `data/run_log.csv` — gitignored sheet view.
-- The script is **idempotent** — rebuilds wholesale from the DB each run; never hand-edit the JSONL.
-- **Commit** `data/run_log.jsonl` after each run.
+  - `data/run_log.jsonl`: the **durable** one-line-per-run record (date, distance, pace, HR, zone %, cardiac drift; treadmill runs flagged `pace_reliable: false`).
+  - `data/run_log.csv`: a sheet view.
+- The script is **idempotent and merging**: it rebuilds from the DB, then merges with the log already on disk (`src/fitness/durable.py`), so a DB rebuild that only refetches recent streams can't blank older runs' zones, drift or power, or drop runs the DB no longer holds. Never hand-edit the JSONL.
 - Treadmill detection: `trainer == true` OR null `start_latlng` in the raw Strava JSON → pace is unreliable; HR/zone data is still trustworthy.
 
 ## More durable logs (recovery, sleep, cross-training, bodyweight)
 
-The same discipline extends to everything worth trending — each is a committed JSONL rebuilt from the DB (or a merge that preserves manual entries), so nothing important lives only in the gitignored cache:
+The same discipline extends to everything worth trending. Each is a JSONL built from the DB and merged with the copy already on disk, so nothing important lives only in the cache and a rebuild never blanks what was there:
 
-- **Recovery** — `python scripts/build_recovery_log.py` → `data/recovery_log.jsonl` (one line/day: sleep score + deep/light/REM/awake totals, resting HR, derived overnight HR floor, HRV, body battery, stress, VO2max, race predictions). Garmin's (unofficial) API is the only source for this, so the committed export is its **only durable backup** — re-run after each sync.
+- **Recovery** — `python scripts/build_recovery_log.py` → `data/recovery_log.jsonl` (one line/day: sleep score + deep/light/REM/awake totals, resting HR, derived overnight HR floor, HRV, body battery, stress, VO2max, race predictions). Garmin's (unofficial) API is the only source for this, so this export is its **only durable backup**: re-run it after each sync. It merges field by field, so a value the DB no longer holds (the HR floor is derived for recent nights only) is never overwritten with null.
 - **Sleep-stage curves** — `python scripts/build_sleep_curves.py` → `data/sleep_curves.jsonl` (one line/night: the full hypnogram). Recovery holds the stage *totals*; this holds the *shape*, which can't be reconstructed once the API is gone. The builder MERGES (never drops an archived night) — just re-run it.
 - **Overnight HRV trace:** `python scripts/build_hrv_trace.py` → `data/hrv_trace.jsonl` (one line/night: the ~90 five-minute HRV readings across the night, plus the nightly and weekly averages and Garmin's status). Recovery holds the nightly *average*; this shows *when* recovery happened: a suppressed early night after an evening session that rebounds before waking reads very differently from the average alone. Watches that record HRV only; MERGES like the sleep curves.
-- **Cross-training cardio** — `python scripts/build_cardio_log.py` → `data/cardio_log.jsonl` (non-run aerobic: elliptical/bike/swim, HR zones + drift). Excludes runs, strength and walks. Machine-console readings no API carries (e.g. elliptical watts) go in a per-session `manual` block that survives rebuilds.
+- **Cross-training cardio** — `python scripts/build_cardio_log.py` → `data/cardio_log.jsonl` (non-run aerobic: elliptical/bike/swim, HR zones + drift). Excludes runs, strength and walks. Machine-console readings no API carries (e.g. elliptical watts) go in a per-session `manual` block that survives rebuilds; a session with one is never dropped.
 - **Bodyweight** — `python scripts/build_weight_log.py` → `data/weight_log.jsonl` (syncs Garmin weigh-ins, preserves manual entries). Load-bearing: it drives protein-per-kg and power-to-weight.
 - **Rowing (Concept2):** `python scripts/build_rowing_log.py` → `data/rowing_log.jsonl` from Logbook CSV exports dropped in `data/concept2_csv/` (one line/workout, pace per 500 m, HR 0 → null). The dashboard stacks it onto the cross-training chart when the file exists.
 - `scripts/backfill_garmin_columns.py` re-derives the structured `garmin_daily` columns (respiration, weekly HRV baseline, light/awake sleep) from the stored `raw_json` with no API call. Run it after a schema change, then rebuild the recovery log.
 
 ## Visual dashboard
 
-`python scripts/build_dashboard.py` → a single self-contained `dashboard.html` (charts embedded as images; opens offline, no server). Rebuilt from the committed logs; regenerate whenever you want it current. Weekly charts are indexed by calendar week, so a week with nothing logged shows as a gap rather than being skipped. Exercise names are canonicalised through `src/fitness/exercise_names.py`, one alias table shared with the progression sheet: when a variant spelling appears in the log ("face pull" beside "face pulls"), add a line there rather than editing the JSONL.
+`python scripts/build_dashboard.py` → a single self-contained `dashboard.html` (charts embedded as images; opens offline, no server). Rebuilt from the JSONL logs; regenerate whenever you want it current. Weekly charts are indexed by calendar week, so a week with nothing logged shows as a gap rather than being skipped. Exercise names are canonicalised through `src/fitness/exercise_names.py`, one alias table shared with the progression sheet: when a variant spelling appears in the log ("face pull" beside "face pulls"), add a line there rather than editing the JSONL.
 
 ## Data sources
 
@@ -89,7 +101,7 @@ The same discipline extends to everything worth trending — each is a committed
 - Garmin sleep/HR/stress/body-battery + VO2max, race predictions, HRV status, derived HR floor → `garmin_daily`; intraday streams → `garmin_intraday`
 - Garmin per-run running **power + dynamics** (cadence, ground contact, vertical oscillation) → `garmin_activities` (Strava carries none of these; joined onto runs in `build_run_log.py`)
 - Strength → `strength_sessions` + `strength_sets` (ingested from the JSONL)
-- Durable committed exports: `recovery_log.jsonl`, `sleep_curves.jsonl`, `hrv_trace.jsonl`, `cardio_log.jsonl`, `weight_log.jsonl`, `run_log.jsonl`, `rowing_log.jsonl` (the SQLite DB is a rebuildable cache; these JSONLs are the durable record)
+- Durable exports: `recovery_log.jsonl`, `sleep_curves.jsonl`, `hrv_trace.jsonl`, `cardio_log.jsonl`, `weight_log.jsonl`, `run_log.jsonl`, `rowing_log.jsonl` (the SQLite DB is a rebuildable cache; these JSONLs are the durable record)
 - Credentials live in `.env` (mode 600). Strava may rotate the refresh token on use; `strava_sync` writes the new one back to `.env` itself, atomically, so never hand-edit `.env` while a sync is running.
 
 ## Training plan
