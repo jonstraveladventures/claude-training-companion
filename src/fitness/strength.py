@@ -41,7 +41,7 @@ def ingest() -> int:
     with connect() as conn:
         # Purge ORPHANS: sessions whose source line no longer exists verbatim.
         # Dedup is by SHA of the raw line, so editing a line in place (which the
-        # logging protocol allows for a fresh, uncommitted typo) yields a NEW
+        # logging protocol allows for a fresh typo) yields a NEW
         # hash — the edited line then inserts as a SECOND session while the
         # pre-edit one lingers, silently double-counting that date in every
         # DB-based analysis. Anything whose hash is gone from the file is stale

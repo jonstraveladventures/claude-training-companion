@@ -15,7 +15,9 @@ Deliberately EXCLUDED, to avoid double-counting or noise:
   - Yoga/Pilates   -> mobility, not aerobic training
 
 Zones come from fitness.zones (shared with build_run_log.py — one source of truth).
-Idempotent: rebuilds wholesale from the DB every run.
+Idempotent and merging: rebuilt from the DB every run, then merged with the log already
+on disk (fitness.durable). A session with a hand-entered `manual` block is never dropped,
+since those readings exist in no API.
 
 Run: .venv/bin/python scripts/build_cardio_log.py
 """
@@ -30,6 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "data" / "fitness.db"
 sys.path.insert(0, str(ROOT / "src"))
 from fitness.zones import zone_dist, drift_quarters  # noqa: E402
+from fitness import durable  # noqa: E402
 
 CARDIO_SPORTS = ("Workout", "Ride", "VirtualRide", "Swim", "StairStepper", "Elliptical", "Hike")
 # Handled elsewhere or deliberately left out (see the docstring). Any other sport type
@@ -38,18 +41,8 @@ HANDLED_ELSEWHERE = ("Run", "Rowing", "VirtualRow", "WeightTraining", "Walk", "Y
 MIN_MINUTES = 10   # below this it's not an aerobic session worth trending
 
 
-def load_existing():
-    """Existing log keyed by activity_id — so hand-entered `manual` readings
-    (machine-console watts etc, which exist in NO API) survive a rebuild."""
-    p = ROOT / "data" / "cardio_log.jsonl"
-    if not p.exists():
-        return {}
-    return {r["activity_id"]: r for r in
-            (json.loads(l) for l in p.read_text().splitlines() if l.strip())}
-
-
 def main():
-    existing = load_existing()
+    existing = durable.load(ROOT / "data" / "cardio_log.jsonl")
     con = sqlite3.connect(DB)
     stream_ids = {r[0] for r in con.execute("SELECT DISTINCT activity_id FROM activity_streams")}
     ph = ",".join("?" * len(CARDIO_SPORTS))
@@ -85,12 +78,15 @@ def main():
                 rec["zones_pct"] = {z: round(100 * tz[z] / tot, 1) for z in tz}
                 rec["z1_z2_pct"] = round(100 * (tz["Z1"] + tz["Z2"]) / tot, 1)
                 rec["z4_z5_pct"] = round(100 * (tz["Z4"] + tz["Z5"]) / tot, 1)
-            rec["drift_quarters"] = drift_quarters(hr)
+            rec["drift_quarters"] = drift_quarters(hr, t)
         # Preserve any hand-entered machine-console readings across the rebuild.
         prev = existing.get(aid) or {}
         rec["manual"] = prev.get("manual")
         records.append(rec)
 
+    records, archived_only = durable.merge(
+        records, existing, {r[0] for r in con.execute("SELECT id FROM activities")},
+        keep=lambda rec: bool(rec.get("manual")))
     with open(ROOT / "data" / "cardio_log.jsonl", "w") as f:
         for r in records:
             f.write(json.dumps(r) + "\n")
@@ -120,6 +116,8 @@ def main():
     print("Wrote data/cardio_log.jsonl + data/cardio_log.csv")
     print(f"  Cardio sessions: {len(records)} (>= {MIN_MINUTES} min)")
     print(f"  With HR-zone distribution: {with_z}")
+    if archived_only:
+        print(f"  {archived_only} kept from the existing log (not in the DB, or hand-entered readings)")
     from collections import Counter
     for sp, n in Counter(r["sport"] for r in records).most_common():
         print(f"    {sp:14} {n}")

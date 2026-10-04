@@ -45,6 +45,7 @@ class Handler(BaseHTTPRequestHandler):
         qs = parse_qs(urlparse(self.path).query)
         if "code" in qs:
             code_holder["code"] = qs["code"][0]
+            code_holder["scope"] = qs.get("scope", [""])[0]
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.end_headers()
@@ -78,7 +79,8 @@ req = urllib.request.Request("https://www.strava.com/oauth/token", data=data)
 import json
 resp = json.loads(urllib.request.urlopen(req).read())
 refresh = resp["refresh_token"]
-print(f"Refresh token: {refresh}")
+# The consent page lets you untick boxes, so show what was actually granted.
+print(f"Granted scopes: {code_holder['scope']}")
 
 sys.path.insert(0, str(ROOT / "src"))
 from fitness.envfile import set_env_var  # noqa: E402  (atomic write; keeps the rest of .env)

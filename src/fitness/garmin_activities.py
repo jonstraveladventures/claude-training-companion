@@ -119,3 +119,55 @@ def by_start_minute() -> dict:
             if st:
                 out[st[:16]] = rec   # 'YYYY-MM-DDTHH:MM'
     return out
+
+
+def _target(s: dict) -> str:
+    kind = (s.get("targetType") or {}).get("workoutTargetTypeKey")
+    a, b = s.get("targetValueOne"), s.get("targetValueTwo")
+    if kind in (None, "no.target"):
+        return ""
+    if kind == "power.zone" and a and b:
+        return f"{a:.0f}-{b:.0f} W"
+    if kind == "heart.rate.zone":
+        return f"{a:.0f}-{b:.0f} bpm" if a and b else f"HR zone {s.get('zoneNumber')}"
+    if kind == "pace.zone" and a and b:   # m/s; the faster bound is the larger value
+        pace = lambda v: f"{int(1000 / v // 60)}:{int(1000 / v % 60):02d}"
+        return f"{pace(b)}-{pace(a)} /km"
+    if kind == "cadence" and a and b:
+        return f"{a:.0f}-{b:.0f} spm"
+    return f"{kind} {a}-{b}"
+
+
+def _steps(steps: list, indent: str = "") -> list[str]:
+    lines = []
+    for s in steps:
+        if s.get("type") == "RepeatGroupDTO":
+            lines.append(f"{indent}{s.get('numberOfIterations')}x:")
+            lines += _steps(s.get("workoutSteps") or [], indent + "  ")
+            continue
+        cond = (s.get("endCondition") or {}).get("conditionTypeKey")
+        v = s.get("endConditionValue")
+        end = ("lap button" if not v else f"{v / 60:g} min" if cond == "time"
+               else f"{v / 1000:g} km" if cond == "distance" else f"{cond} {v:g}")
+        kind = (s.get("stepType") or {}).get("stepTypeKey", "step")
+        parts = [kind, end, _target(s), s.get("description") or ""]
+        lines.append(indent + ", ".join(p for p in parts if p))
+    return lines
+
+
+def scheduled(date: str) -> list[dict]:
+    """The workouts scheduled in Garmin Connect for one day ('YYYY-MM-DD'), each with its
+    steps written out, so a run is judged against what was planned for that day. The
+    calendar's month view also carries the neighbouring weeks, hence the filter on date."""
+    g = _client()
+    year, month = int(date[:4]), int(date[5:7])
+    out = []
+    for item in g.get_scheduled_workouts(year, month).get("calendarItems", []):
+        if item.get("itemType") != "workout" or item.get("date") != date:
+            continue
+        w = g.get_workout_by_id(item["workoutId"])
+        steps = [line for seg in w.get("workoutSegments") or []
+                 for line in _steps(seg.get("workoutSteps") or [])]
+        out.append({"title": item.get("title"), "workout_id": item["workoutId"],
+                    "description": w.get("description"), "steps": steps})
+    return out

@@ -1,6 +1,6 @@
 """Maintain the durable bodyweight log.
 
-`data/weight_log.jsonl` is the committed source of truth (one line per weigh-in).
+`data/weight_log.jsonl` is the durable source of truth (one line per weigh-in).
 It carries two kinds of entry:
   - source="garmin" — weigh-ins pulled from Garmin Connect (a connected scale, or
     entered in the app); this script syncs any it doesn't already have.

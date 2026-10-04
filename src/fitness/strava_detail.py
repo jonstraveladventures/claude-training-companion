@@ -36,7 +36,7 @@ def _needs_streams(conn, activity_id: int) -> bool:
 
 
 def backfill(limit: int | None = 250, include_streams: bool = True) -> dict:
-    """Fetch detail + streams for the most recent `limit` activities missing them.
+    """Fetch detail + streams for up to `limit` activities missing them, newest first.
 
     limit=None means all. Safely resumable — already-fetched activities are skipped.
     """
@@ -53,7 +53,6 @@ def backfill(limit: int | None = 250, include_streams: bool = True) -> dict:
     for activity_id in ids:
         if limit is not None and processed >= limit:
             break
-        processed += 1
 
         with connect() as conn:
             need_d = _needs_detail(conn, activity_id)
@@ -62,6 +61,10 @@ def backfill(limit: int | None = 250, include_streams: bool = True) -> dict:
         if not need_d and not need_s:
             counts["skipped"] += 1
             continue
+        # Count only activities that needed fetching. Counting the skipped ones too meant
+        # the default limit never got past the 250 most recent activities, so after a DB
+        # rebuild everything older stayed without streams unless --all was given.
+        processed += 1
 
         try:
             if need_d:

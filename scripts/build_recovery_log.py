@@ -1,9 +1,9 @@
-"""Export daily Garmin recovery metrics to a durable, committed JSONL.
+"""Export daily Garmin recovery metrics to a durable JSONL.
 
 The `garmin_daily` table (sleep, resting HR, HRV, body battery, stress, VO2max,
 race predictions, training readiness) lives ONLY in the gitignored SQLite DB,
 pulled through an unofficial Garmin API. Runs, strength and rowing all have a
-committed JSONL export; recovery data had none, so a DB wipe or the Garmin
+durable JSONL export; recovery data had none, so a DB wipe or the Garmin
 library breaking would lose the entire basis of the morning recovery checks.
 
 This closes that gap: one line per day. It MERGES with the existing file: a day
@@ -60,7 +60,11 @@ def main():
         rec = {c: r[c] for c in cols}
         if not any(rec.get(k) is not None for k in SIGNAL):
             continue  # no-wear day (or a rate-limited empty row): nothing to preserve
-        merged[rec["date"]] = rec
+        # Field by field: a DB null never overwrites an archived value. After a DB
+        # rebuild hr_floor exists only for the last 21 days and vo2max / readiness for
+        # the last 45, so a whole-day replace would blank the older ones.
+        old = merged.get(rec["date"], {})
+        merged[rec["date"]] = {**old, **{k: v for k, v in rec.items() if v is not None}}
         archived_only.discard(rec["date"])
         fresh += 1
 

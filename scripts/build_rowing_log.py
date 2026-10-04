@@ -7,7 +7,7 @@ Two sources, merged and deduped on Log ID:
      (GET /users/me/results), if you script that yourself or use pm5-force-logger's
      concept2.py. Richer, and it carries the per-split detail the CSV drops.
 
-API rows win on conflict. Output is data/rowing_log.jsonl (committed, one JSON
+API rows win on conflict. Output is data/rowing_log.jsonl (durable, one JSON
 object per workout, sorted by date).
 
 Idempotent: rebuilds wholesale each run. Pace is per 500 m (Concept2 standard).
@@ -105,10 +105,18 @@ def _enrich_from_pm5(rec: dict, sess: dict, path) -> None:
     beats = [st["hr"] for st in strokes if st.get("hr")]
     if rec.get("avg_hr") is None and beats:
         rec["avg_hr"] = round(sum(beats) / len(beats))
+    own = [sp for sp in sess.get("splits") or [] if sp.get("split_time_s")]
+    if rec.get("splits") is None and own:
+        # The PM5's own split records, which pm5-force-logger decodes from its 2026-09-22
+        # version. Right for a piece split by time as well as by distance.
+        rec["splits"] = [[sp["split_time_s"], sp.get("split_distance_m"), sp.get("split_spm"),
+                          sp.get("split_hr")] for sp in own]
     summary = sess.get("summary") or {}
     n = summary.get("split_count") or 0
     if rec.get("splits") is None and n > 1 and rec.get("work_distance_m") and strokes:
-        size = rec["work_distance_m"] / n           # distance splits (the logger posts only those)
+        # Older session files have no split records: rebuild them as distance splits, which is
+        # what the logger posted then. A piece split by time would come out wrong here.
+        size = rec["work_distance_m"] / n
         splits, prev_t = [], 0.0
         for k in range(1, n + 1):
             inside = [st for st in strokes if (k - 1) * size < st["distance_m"] <= k * size]

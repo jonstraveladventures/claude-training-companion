@@ -4,7 +4,7 @@ The nightly stage *totals* live in recovery_log.jsonl; this stores the full
 *shape* — every deep/light/REM/awake segment through the night — which is the
 one thing that genuinely can't be reconstructed once Garmin's (unofficial) API
 is gone. The intraday sleepLevels are captured inside garmin_daily.raw_json (a
-gitignored, API-rebuilt cache); this pulls them out into a committed file.
+gitignored, API-rebuilt cache); this pulls them out into a durable file.
 
 `data/sleep_curves.jsonl` — one line per night:
   {"date","offset_h","start_local","end_local","segments":[[start_min,dur_min,stage],...]}

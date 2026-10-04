@@ -51,8 +51,27 @@ def zone_dist(hr, t) -> dict | None:
     return tz if sum(tz.values()) else None
 
 
-def drift_quarters(hr) -> list | None:
-    """Mean HR per quarter of the session (cardiac-drift signal)."""
+def drift_quarters(hr, t=None) -> list | None:
+    """Mean HR per quarter of the session's elapsed time (cardiac-drift signal).
+
+    Pass the time stream. Strava streams are unevenly spaced and densest at the start, so
+    a quarter of the SAMPLES is not a quarter of the run: splitting by count put the first
+    quarter's end three minutes into a sixteen-minute run and moved a peak into the wrong
+    quarter. Each reading covers the interval since the previous one (as in zone_dist),
+    and an interval straddling a boundary is split between the two quarters. Without t it
+    falls back to equal sample counts."""
+    if t and hr and len(t) == len(hr) and t[-1] > t[0]:
+        edges = [t[0] + k * (t[-1] - t[0]) / 4 for k in range(5)]
+        num, den = [0.0] * 4, [0.0] * 4
+        for i in range(1, len(t)):
+            if hr[i] is None:
+                continue
+            for q in range(4):
+                span = min(t[i], edges[q + 1]) - max(t[i - 1], edges[q])
+                if span > 0:
+                    num[q] += hr[i] * span
+                    den[q] += span
+        return [round(num[q] / den[q], 1) for q in range(4)] if all(den) else None
     hr = [h for h in (hr or []) if h is not None]
     if not hr:
         return None

@@ -204,9 +204,35 @@ SPARSE = ("hrv_overnight", "hrv_weekly_avg", "hrv_status", "vo2max",
           "stress_avg")
 
 
+def _merge_raw(conn, rows: list[dict]) -> None:
+    """Keep each stored raw_json sub-blob that this sync came back without.
+
+    raw_json is the only source the offline backfill and the sleep-curve / HRV-trace
+    builders can re-derive from, but older days are fetched without max_metrics and
+    training_readiness (deep_days), and a failed call is stored as {}. Replacing the
+    whole blob threw those away on every sync; COALESCE can't help, as the new blob
+    is never null. So merge per key: a new non-empty sub-blob wins, an empty one
+    keeps what was stored."""
+    for row in rows:
+        old = conn.execute("SELECT raw_json FROM garmin_daily WHERE date=?",
+                           (row["date"],)).fetchone()
+        if not old or not old[0]:
+            continue
+        try:
+            stored = json.loads(old[0])
+        except ValueError:
+            continue
+        new = json.loads(row["raw_json"])
+        for k, v in stored.items():
+            if v and not new.get(k):
+                new[k] = v
+        row["raw_json"] = json.dumps(new, default=str)
+
+
 def _upsert(conn, rows: list[dict]) -> None:
     if not rows:
         return
+    _merge_raw(conn, rows)
     cols = list(rows[0])
     updates = ", ".join(
         f"{c}=COALESCE(excluded.{c}, garmin_daily.{c})" if c in SPARSE else f"{c}=excluded.{c}"

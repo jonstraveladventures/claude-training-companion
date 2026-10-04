@@ -2,12 +2,14 @@
 
 Runs are pulled from Strava into the (gitignored) SQLite DB. That makes Strava
 the upstream source, but leaves NO durable in-repo record. This script fixes
-that: it regenerates a committed `data/run_log.jsonl` (one line per run, with
+that: it regenerates a durable `data/run_log.jsonl` (one line per run, with
 computed HR-zone distribution + cardiac drift) so every run is tracked over
 time independently of Strava, plus a `data/run_log.csv` view for the Google
 Sheet "Fitness — Run Log".
 
-Idempotent: rebuilds both files from the DB every run. Safe to run repeatedly.
+Idempotent and merging: rebuilt from the DB every run, then merged with the log already
+on disk (fitness.durable), so a DB rebuild that only refetches recent streams cannot blank
+older runs' zones, drift or power. Safe to run repeatedly.
 
 Run: .venv/bin/python scripts/build_run_log.py
 """
@@ -22,6 +24,7 @@ DB = ROOT / "data" / "fitness.db"
 # with build_cardio_log.py so the two logs can never drift apart.
 sys.path.insert(0, str(ROOT / "src"))
 from fitness.zones import zone, zone_dist, drift_quarters  # noqa: E402
+from fitness import durable  # noqa: E402
 
 con = sqlite3.connect(DB)
 stream_ids = {r[0] for r in con.execute("SELECT DISTINCT activity_id FROM activity_streams")}
@@ -189,15 +192,19 @@ for row, machine_dist_m, dup_ids in deduped:
             rec["zones_pct"] = {z: round(100 * tz[z] / tot, 1) for z in tz}
             rec["z1_z2_pct"] = round(100 * (tz["Z1"] + tz["Z2"]) / tot, 1)
             rec["z4_z5_pct"] = round(100 * (tz["Z4"] + tz["Z5"]) / tot, 1)
-        rec["drift_quarters"] = drift_quarters(hr)
+        rec["drift_quarters"] = drift_quarters(hr, t)
 
     rec["garmin"] = _garmin_block(start)   # running power + dynamics (watch-dependent; sparse)
     rec["merged_ids"] = dup_ids or None    # audit trail: twin recordings collapsed in
 
     records.append(rec)
 
-# --- Durable JSONL (committed) ---
+# --- Durable JSONL ---
 jsonl = ROOT / "data" / "run_log.jsonl"
+records, archived_only = durable.merge(
+    records, durable.load(jsonl), {r[0] for r in con.execute("SELECT id FROM activities")})
+if archived_only:
+    print(f"  {archived_only} run(s) kept from the existing log: not in the DB")
 with open(jsonl, "w") as f:
     for r in records:
         f.write(json.dumps(r) + "\n")
