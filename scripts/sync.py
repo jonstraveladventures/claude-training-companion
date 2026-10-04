@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fitness import strava_sync, garmin_sync, garmin_activities, strength
+from fitness import strava_sync, garmin_sync, garmin_activities, strength, concept2_sync
 from fitness.db import init
 
 init()
@@ -17,4 +17,10 @@ try:
     print(f"Garmin activities: {garmin_activities.sync()} run metrics cached")
 except RuntimeError as e:   # a missing credential: say which, without a traceback
     sys.exit(f"sync: {e}")
+if concept2_sync.configured():   # optional: only for those who row and set up the Logbook link
+    try:
+        print(f"Concept2: {concept2_sync.incremental()} results")
+    except (RuntimeError, OSError, ValueError) as e:   # urllib's HTTP errors are OSErrors
+        print(f"Concept2: skipped ({str(e).rstrip('.')}). If the refresh token is invalid, "
+              "re-run scripts/concept2_auth.py.")
 print(f"Strength: {strength.ingest()} new sessions")

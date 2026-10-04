@@ -134,10 +134,11 @@ Pull from the SQLite DB + the JSONL and report:
   don't carry (e.g. elliptical watts) into that session's `manual` block: it survives
   rebuilds. Never compare machine watts to running power, or across different
   (uncalibrated) machines.
-- **Rowing (Concept2):** drop a Logbook CSV export into `data/concept2_csv/` and run
-  `.venv/bin/python scripts/build_rowing_log.py`. Use the split-weighted HR, not the headline
-  average, and compare watts across sessions only at matching drag factor (see the caveats in
-  `CLAUDE.md`).
+- **Rowing (Concept2):** if the Concept2 credentials are in `.env`, `scripts/sync.py` pulls
+  new Logbook results into `data/concept2_api_cache.json`; otherwise drop a Logbook CSV
+  export into `data/concept2_csv/`. Then run `.venv/bin/python scripts/build_rowing_log.py`.
+  Use the split-weighted HR, not the headline average, and compare watts across sessions
+  only at matching drag factor (see the caveats in `CLAUDE.md`).
 - **Bodyweight:** when the user reports a weight, append a manual line to
   `data/weight_log.jsonl` and run `.venv/bin/python scripts/build_weight_log.py` (merges
   Garmin weigh-ins, preserves manual entries). Bodyweight is load-bearing: it drives

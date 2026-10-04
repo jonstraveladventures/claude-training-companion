@@ -3,9 +3,10 @@
 Two sources, merged and deduped on Log ID:
   1. data/concept2_csv/*.csv — season exports from log.concept2.com (Log -> Export).
      Drop a fresh export in and re-run; this is all most people need.
-  2. data/concept2_api_cache.json — optional: a list of Logbook API results
-     (GET /users/me/results), if you script that yourself or use pm5-force-logger's
-     concept2.py. Richer, and it carries the per-split detail the CSV drops.
+  2. data/concept2_api_cache.json — optional: the Logbook API cache that
+     scripts/sync.py keeps once the Concept2 credentials are in .env
+     (src/fitness/concept2_sync.py). Richer, and it carries the per-split detail
+     the CSV drops.
 
 API rows win on conflict. Output is data/rowing_log.jsonl (durable, one JSON
 object per workout, sorted by date).
