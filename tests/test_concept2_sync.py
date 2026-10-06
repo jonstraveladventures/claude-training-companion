@@ -97,16 +97,40 @@ class Concept2SyncTest(unittest.TestCase):
         self.assertEqual(api.token_requests[0]["scope"], ["user:read,results:read"])
         self.assertFalse(hasattr(c2, "post_result"))
 
-    def test_pagination_and_merge_into_cache(self):
+    def test_pagination_and_partial_fetch_merge_into_cache(self):
         self.cache.write_text(json.dumps([result(1, "2026-09-01"), result(2, "2026-09-03")]))
         api = FakeAPI([[result(1, "2026-09-01", time=11900), result(3, "2026-09-05")],
                        [result(4, "2026-09-07")]])
-        n = self.run_sync(api)
+        n = self.run_sync(api, updated_after="2026-08-25")
         self.assertEqual(n, 3)                                  # results fetched, both pages
         self.assertEqual([q["page"] for q in api.result_queries], [["1"], ["2"]])
+        self.assertEqual(api.result_queries[0]["updated_after"], ["2026-08-25"])
         rows = self.cached()
         self.assertEqual([r["id"] for r in rows], [1, 2, 3, 4])  # merged, sorted by date
         self.assertEqual(rows[0]["time"], 11900)                # the fresh copy wins
+
+    def test_full_sync_drops_results_deleted_in_the_logbook(self):
+        self.cache.write_text(json.dumps([result(i, f"2026-09-0{i}") for i in (1, 2, 3)]))
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            n = self.run_sync(FakeAPI([[result(1, "2026-09-01"), result(3, "2026-09-03")]]))
+        self.assertEqual(n, 2)
+        self.assertEqual([r["id"] for r in self.cached()], [1, 3])
+        self.assertIn("result 2 (2026-09-02 07:00, 5000 m) is no longer in the Logbook", out.getvalue())
+
+    def test_full_sync_refuses_an_empty_listing(self):
+        self.cache.write_text(json.dumps([result(1, "2026-09-01"), result(2, "2026-09-02")]))
+        before = self.cache.read_text()
+        with self.assertRaisesRegex(RuntimeError, "returned 0 results and would drop 2 of 2"):
+            self.run_sync(FakeAPI([[]]))
+        self.assertEqual(self.cache.read_text(), before)
+
+    def test_full_sync_refuses_to_drop_more_than_ten(self):
+        self.cache.write_text(json.dumps([result(i, "2026-09-01") for i in range(1, 13)]))
+        before = self.cache.read_text()
+        with self.assertRaisesRegex(RuntimeError, "would drop 11 of 12"):
+            self.run_sync(FakeAPI([[result(1, "2026-09-01")]]))
+        self.assertEqual(self.cache.read_text(), before)
 
     def test_first_sync_creates_the_data_folder(self):
         (self.tmp / "data").rmdir()

@@ -19,7 +19,8 @@ except RuntimeError as e:   # a missing credential: say which, without a traceba
     sys.exit(f"sync: {e}")
 if concept2_sync.configured():   # optional: only for those who row and set up the Logbook link
     try:
-        print(f"Concept2: {concept2_sync.incremental()} results")
+        # The full listing (one request per 250 results) lets a Logbook deletion reach the cache.
+        print(f"Concept2: {concept2_sync.sync()} results")
     except (RuntimeError, OSError, ValueError) as e:   # urllib's HTTP errors are OSErrors
         print(f"Concept2: skipped ({str(e).rstrip('.')}). If the refresh token is invalid, "
               "re-run scripts/concept2_auth.py.")

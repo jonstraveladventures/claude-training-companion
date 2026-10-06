@@ -8,7 +8,7 @@ data/rowing_log.jsonl.
 
 Auth: register an API application with Concept2, put its ID and secret in .env, and
 run scripts/concept2_auth.py once to obtain CONCEPT2_REFRESH_TOKEN. Access is
-read-only (user:read, results:read). scripts/sync.py runs incremental() whenever
+read-only (user:read, results:read). scripts/sync.py runs a full sync() whenever
 the three credentials are set, and skips Concept2 otherwise.
 
 The raw cache (data/concept2_api_cache.json) is rebuildable from the API;
@@ -16,7 +16,7 @@ rowing_log.jsonl is the durable record, the same pattern as the Strava/Garmin DB
 
 Usage:
     from fitness import concept2_sync
-    concept2_sync.sync()                 # everything the API will give
+    concept2_sync.sync()                 # the whole Logbook; replaces the cache, so deletions carry over
     concept2_sync.sync(updated_after="2026-07-01")
     concept2_sync.incremental()          # from a week before the newest cached result
 """
@@ -101,12 +101,31 @@ def fetch_results(updated_after: str | None = None, page_size: int = 250) -> lis
     return out
 
 
+MAX_DROP = 10   # a full listing that would drop more than this is a broken response, not deletions
+
+
 def sync(updated_after: str | None = None) -> int:
-    """Fetch results and merge them into the raw cache, keyed by log id."""
+    """Fetch results into the raw cache, keyed by log id.
+
+    With `updated_after` the fetch is partial, so it merges into the cache. Without it the
+    fetch is the whole Logbook, so it replaces the cache, and a result deleted in the
+    Logbook (a duplicate, say) leaves the cache too instead of lingering in it. A listing
+    that comes back empty, or would drop more than MAX_DROP results, is refused and the
+    cache is left as it was."""
     fresh = fetch_results(updated_after=updated_after)
     cache = {}
     if CACHE.exists():
         cache = {str(r["id"]): r for r in json.loads(CACHE.read_text())}
+    if updated_after is None and cache:
+        live = {str(r["id"]) for r in fresh}
+        gone = [r for k, r in cache.items() if k not in live]
+        if not fresh or len(gone) > MAX_DROP:
+            raise RuntimeError(f"the full Logbook listing returned {len(fresh)} results and would "
+                               f"drop {len(gone)} of {len(cache)} cached; cache left unchanged")
+        for r in gone:
+            print(f"Concept2: result {r['id']} ({str(r.get('date', ''))[:16]}, "
+                  f"{r.get('distance')} m) is no longer in the Logbook; dropped from the cache")
+        cache = {}
     for r in fresh:
         cache[str(r["id"])] = r
     CACHE.parent.mkdir(exist_ok=True)
@@ -118,7 +137,8 @@ def sync(updated_after: str | None = None) -> int:
 def incremental(overlap_days: int = 7) -> int:
     """sync() from `overlap_days` before the newest cached result, or everything on a first
     run. The overlap re-fetches recent results, so a comment or correction made in the
-    Logbook since the last sync still arrives."""
+    Logbook since the last sync still arrives. A partial fetch can't see deletions; a full
+    sync() can."""
     since = None
     if CACHE.exists():
         dates = [str(r.get("date") or "")[:10] for r in json.loads(CACHE.read_text())]
