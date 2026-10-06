@@ -51,7 +51,7 @@ Trigger: "how was my sleep / last night", "pull my garmin/sleep data", "how was 
    | Overnight HRV + HRV Status | inside the status band | see step 3 |
    | Overnight respiration | steady (often ~12/min asleep) | a rise flags illness, alcohol or overreaching |
    | Body-battery high (overnight peak) | > 90 | full consolidation |
-   | Body-battery low | > 70 | a low value means you went to bed in recovery debt |
+   | Body-battery low (pre-sleep) | inside your usual range | well below it means you went to bed in recovery debt |
    | Avg overnight stress | < 16 | HRV-derived proxy |
    | Training readiness | your own average | Garmin's composite; newer watches only |
 
